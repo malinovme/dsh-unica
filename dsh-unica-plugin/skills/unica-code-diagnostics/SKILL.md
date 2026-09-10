@@ -1,0 +1,128 @@
+---
+name: code-diagnostics
+description: "Диагностика BSL и объяснение отключений правил. Используй, когда нужно запустить или разобрать диагностики BSL, АПК, EDT, BSL LS, inline/range disable markers, suppression-комментарии или стандарт v8std за диагностикой."
+---
+
+# Code Diagnostics
+
+## MCP routing
+
+- Preferred path: use MCP `unica` tools `mcp__unica__unica_code_diagnostics_43785e27e86c`, `mcp__unica__unica_source_locate_90d2dfe965b7`, `mcp__unica__unica_project_map_7cc63b822c1d`, `mcp__unica__unica_code_graph_c09c4e5a3a83`, `mcp__unica__unica_code_definition_3534a044b497`, `mcp__unica__unica_code_outline_dc58fe5ade0e`, `mcp__unica__unica_code_search_70af4c0986a7`, `mcp__unica__unica_standards_explain_79d0ab30ea9c`, `mcp__unica__unica_standards_search_cab77e9c1bda`, and `mcp__unica__unica_runtime_execute_0cd62fbc3716`.
+- По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `mcp__unica__unica_runtime_execute_0cd62fbc3716` с `dryRun: true`
+показывает запланированную команду без побочных эффектов, а с `dryRun: false`
+исполняет классифицированную операцию и отвечает её терминальным результатом в
+том же вызове, приложив названную причину риска (`runtime_risk_*`)
+предупреждением; неклассифицированная операция по-прежнему отказывает
+`runtime_operation_unbounded` до обнаружения рабочего пространства. Preview
+исполнением не является. Работу, которую вызов ждать не должен, запускай через
+`mcp__unica__unica_runtime_job_start_64e0bb584ac4`. Не обходи контракт прямым runner-ом или через
+`unica.build.*`.
+- Every diagnostics call names an exact `sourceSet`; `cwd` selects the workspace only and never identifies the target. Use `mcp__unica__unica_project_map_7cc63b822c1d` when the source-set name is unknown.
+- Use `action=status` before resident `findings` when readiness is uncertain. A completed status request is not proof that a provider is ready: read each `providers[].readiness.state` and call `findings` only for `ready`; `building`, `notStarted`, and `stale` are not clean results.
+- Use `action=findings` with a logical `metadataPath` for one module or metadata object, `action=analyze` for a complete one-shot source-set scan, and `action=catalog` to discover provider-qualified rules. Provider execution is routed internally; do not pass a provider selector. The current live provider `bsl-analyzer` supports module findings only. Until a metadata provider is registered, a metadata-object request fails at request level with `no_applicable_provider`; this means neither clean metadata nor a bad logical address.
+- `action=analyze` may set `timeoutSeconds` from 30 to 3600. Without it the call uses `operational.code_diagnostics.analyze_timeout_seconds` from `<workspaceRoot>/unica.local.toml`, then `unica.toml`, then the compiled 120-second fallback. `findings`, `status`, and `catalog` do not read this operational config, do not accept `timeoutSeconds`, and run on that same compiled 120-second budget.
+- Put severity and exact case-sensitive codes under `filter`. Every code is `{provider, code}`; obtain provider ids and codes from `catalog`. `limit` is global across providers after normalization and deterministic ordering.
+- Read `location` as the shared logical navigation target and `focus` as the position inside it. `location.kind=addressed` carries `sourceSet`, optional `metadataPath`, and derived `targetKind`; `location.kind=unaddressable` carries a safe relative `path` and the item carries `locationReason`. `focus.kind` is `target`, `sourceRange`, or `metadata`.
+- Treat `state=partial` as useful but incomplete. A `resourceFailure` is one provider's failure for one logical resource. `location.kind=unaddressable` means the observation is safe to report but cannot be navigated as its own logical target. A provider section with `complete=false` and an error may still carry proven items: one resource the mapper could not place never withdraws the rest. Neither means clean code.
+- For actions that return `items`, only `state=completed`, `complete=true`, `truncated=false`, and provider sections without failures prove an exhaustive answer. Check `itemsTotal` and `itemsReturned` before treating `items` as complete. `status` has no `truncated` field; its evidence is each provider's readiness.
+- `mcp__unica__unica_code_definition_3534a044b497` returns `index_pending:` only while an RLM index is building and `index_unavailable:` for missing, stale, failed, or unavailable indexes. Neither means “no definitions”.
+- Use `mcp__unica__unica_code_graph_c09c4e5a3a83` only for diagnostic impact context. v8std access goes only through public `unica.standards.*` tools. Do not call internal analyzer, standards, or package adapters directly.
+
+## Workflow
+
+1. Resolve the exact `sourceSet`. If the starting point is a physical file, use `mcp__unica__unica_source_locate_90d2dfe965b7` to obtain its logical `metadataPath`.
+2. Call `status` when resident readiness matters and `catalog` when rule ids need classification. Use `findings` for one logical target or `analyze` for the whole source set.
+3. Group diagnostics by logical `location`, provider-qualified code, and root cause. Follow `focus` for the exact source range or metadata element.
+4. Inspect the target with `mcp__unica__unica_code_outline_dc58fe5ade0e`, `mcp__unica__unica_code_definition_3534a044b497`, or `mcp__unica__unica_code_search_70af4c0986a7`. Use `mcp__unica__unica_code_graph_c09c4e5a3a83` before changing shared or exported behavior.
+5. Call `mcp__unica__unica_standards_explain_79d0ab30ea9c` with explicit codes; otherwise use `mcp__unica__unica_standards_search_cab77e9c1bda` by diagnostic name, АПК/EDT/BSL LS token, or nearby snippet.
+6. Report source cause, impacted diagnostics, logical target and focus, standard evidence, and verification result.
+
+## Verification gate
+
+This verification gate is mandatory:
+
+- Run diagnostics after syntax-sensitive edits and treat new `error` findings as blocking.
+- Run impact analysis when an exported method, metadata handler, public API, query path, or shared module contract changes.
+- If public MCP `unica` cannot expose required evidence, report a contract gap instead of claiming full verification.
+
+## Suppression and range-disable comments
+
+Когда inline/range disable markers или suppression-комментарии отключают диагностику строки или диапазона, считайте точный маркер частью доказательства.
+
+- Extract literal rule codes from АПК, EDT, BSL LS, analyzer, or suppression comments.
+- Explain an отключение only when the code, surrounding range, and standard support the reason.
+- Prefer fixing the cause or narrowing the disabled range. Keep suppression only with standards, platform-help, or runtime evidence of an intentional false positive.
+
+## MCP examples
+
+One logical module, narrowed to one rule. Remove `filter.codes` to include all codes at the selected severity threshold; set `filter.minSeverity=hint` for every severity and still inspect `truncated`:
+
+```jsonc
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_code_diagnostics_43785e27e86c",
+    "arguments": {
+      "cwd": "<workspace>",
+      "action": "findings",
+      "sourceSet": "main",
+      "metadataPath": "CommonModule.Продажи.Module",
+      "filter": {
+        "minSeverity": "warning",
+        "codes": [
+          {"provider": "bsl-analyzer", "code": "UnusedLocalVariable"}
+        ]
+      },
+      "limit": 100
+    }
+  }
+}
+```
+
+Complete source-set scan:
+
+```jsonc
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_code_diagnostics_43785e27e86c",
+    "arguments": {
+      "cwd": "<workspace>",
+      "action": "analyze",
+      "sourceSet": "main",
+      "timeoutSeconds": 900
+    }
+  }
+}
+```
+
+```jsonc
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_standards_explain_79d0ab30ea9c",
+    "arguments": {
+      "codes": ["АПК:142", "LineLength"]
+    }
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_runtime_execute_0cd62fbc3716",
+    "arguments": {
+      "cwd": "<workspace>",
+      "operation": "syntax",
+      "mode": "designer-modules",
+      "dryRun": true
+    }
+  }
+}
+```

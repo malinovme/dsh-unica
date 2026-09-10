@@ -1,0 +1,66 @@
+---
+name: log-analysis
+description: "Анализ журнала регистрации и технологического журнала 1С. Используй когда нужно разобрать ЖР, ТЖ, исключения, блокировки, SQL/DBMSSQL, deadlock, long call, фоновые задания, HTTP-сервис или связать записи журнала с кодом."
+---
+
+# Log Analysis
+
+## MCP routing
+
+- Preferred path: use MCP `unica` tools `mcp__unica__unica_code_search_70af4c0986a7`, `mcp__unica__unica_meta_info_524a81764d16`, `mcp__unica__unica_project_map_7cc63b822c1d`, `mcp__unica__unica_code_diagnostics_43785e27e86c`, `mcp__unica__unica_standards_search_cab77e9c1bda`, and `mcp__unica__unica_standards_explain_79d0ab30ea9c`.
+- По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `mcp__unica__unica_runtime_execute_0cd62fbc3716` с `dryRun: true`
+показывает запланированную команду без побочных эффектов, а с `dryRun: false`
+исполняет классифицированную операцию и отвечает её терминальным результатом в
+том же вызове, приложив названную причину риска (`runtime_risk_*`)
+предупреждением; неклассифицированная операция по-прежнему отказывает
+`runtime_operation_unbounded` до обнаружения рабочего пространства. Preview
+исполнением не является. Работу, которую вызов ждать не должен, запускай через
+`mcp__unica__unica_runtime_job_start_64e0bb584ac4`. Не обходи контракт прямым runner-ом или через
+`unica.build.*`.
+- Use `mcp__unica__unica_runtime_execute_0cd62fbc3716` to preview typed syntax/test/launch arguments and, with `dryRun: false`, to run it, never as verification or a substitute for log evidence.
+- Do not call internal runtime, analyzer, standards, or package adapters directly. They are hidden behind MCP `unica`.
+
+## Inputs
+
+Accept explicit journal registration exports, technological log files, copied log fragments, or paths provided by the user. Preserve timestamps, process/session ids, users, infobase, event kind, module/procedure, transaction id, SQL text, and correlation ids.
+
+## References
+
+- Read `../../references/platform/runtime-diagnostics.md` for ЖР/ТЖ timeline, startup, web-client, HTTP, background job, and process/session evidence.
+- Read `../../references/platform/db-performance.md` when log fragments contain SQL, locks, deadlocks, waits, long queries, or DBMS-specific artifacts.
+
+## Workflow
+
+1. Classify the evidence: ЖР event, ТЖ event, platform exception, DBMS/SQL, lock/deadlock, long call, background job, HTTP service, web client request, or auth/session problem.
+2. Build a timeline. Keep clock source and timezone explicit when several files are involved.
+3. Extract module, procedure, metadata object, HTTP path, query text, user/session, and transaction identifiers.
+4. Map log entries back to source with `mcp__unica__unica_code_search_70af4c0986a7` and metadata with `mcp__unica__unica_meta_info_524a81764d16`.
+5. Use `mcp__unica__unica_standards_search_cab77e9c1bda` or `mcp__unica__unica_standards_explain_79d0ab30ea9c` for diagnostic ids and `development-standard` recommendations. The exact meaning of a platform message requires a `platform-help` source; if public MCP `unica` does not expose one, report the contract gap.
+6. Separate root cause from consequences: the first exception/lock/timeout usually matters more than later rollback noise.
+7. For DBMS evidence, preserve lock holder/waiter, SQL text, transaction boundary, process id, session id, wait event, table/index name, and elapsed time together.
+
+## Output
+
+- Root-cause hypothesis with evidence lines.
+- Timeline of key events.
+- Affected code and metadata paths.
+- Recommended fix or next measurement.
+- Missing evidence, if the log fragment cannot support a reliable conclusion.
+
+## MCP example
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_code_search_70af4c0986a7",
+    "arguments": {
+      "cwd": "<workspace>",
+      "sourceSet": "<source-set-from-project-map>",
+      "query": "ВыполнитьОбменСКонтрагентом",
+      "limit": 20
+    }
+  }
+}
+```

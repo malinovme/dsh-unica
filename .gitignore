@@ -1,0 +1,11 @@
+# Build output — regenerate with `node package.mjs`
+dist/
+
+# Dependencies, if anyone ever runs pnpm/npm here
+node_modules/
+
+# Written by `node tools/build-skills.mjs`; contains absolute paths of the
+# build machine, so it is machine-specific rather than source.
+# A bare name matches at any depth — `tools/build-report.json` would be
+# anchored to the repository root and miss dsh-unica-plugin/tools/.
+build-report.json
