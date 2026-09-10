@@ -1,0 +1,84 @@
+name: checks
+
+# Runs the port's integrity checks and guards the two contracts that are easy to
+# break silently: the skills/references pairing and the bootstrap binary modes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The checks that need no upstream payload: they read only what is committed.
+  integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # 26 skills cite ../../references/...; this proves every citation resolves
+      # to a file that is actually committed. Regenerating skills after an
+      # upstream bump is exactly when this breaks.
+      - name: Reference citations resolve
+        working-directory: dsh-unica-plugin
+        run: node tools/check-refs.mjs .
+
+      # The skills are almost entirely Russian prose. A bad UTF-8 round-trip in
+      # any copy step turns them into mojibake, which no other check would catch.
+      - name: No mojibake in ported files
+        working-directory: dsh-unica-plugin
+        run: node tools/check-encoding.mjs skills references
+
+      # Documentation numbers must match the shipped catalog, or the README
+      # starts lying about the tool surface.
+      - name: Tool surface summary
+        working-directory: dsh-unica-plugin
+        run: node tools/surface-summary.mjs .
+
+      # The install patch and the preset composition are generated, so they are
+      # only ever proven by running the generator.
+      - name: Installer composes a plan (POSIX branch)
+        working-directory: dsh-unica-plugin
+        run: node install.mjs --dsh-home /tmp/dsh-ci --target both --dry-run
+
+      - name: Installer rejects an unsupported platform
+        working-directory: dsh-unica-plugin
+        run: |
+          if node install.mjs --target profile --dry-run --platform freebsd 2>/dev/null; then
+            echo "expected a non-zero exit for an unsupported platform" >&2
+            exit 1
+          fi
+
+  # File modes are only real on a POSIX checkout. Windows git records every file
+  # as 100644, so a contributor on Windows can silently drop the execute bit and
+  # nothing local would notice; upstream launch.sh execs the bootstrap directly,
+  # which needs it.
+  posix-modes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unix bootstrap binaries and launch.sh are executable
+        run: |
+          fail=0
+          for f in \
+            dsh-unica-plugin/bootstrap/launch.sh \
+            dsh-unica-plugin/bootstrap/bin/darwin-arm64/unica-bootstrap \
+            dsh-unica-plugin/bootstrap/bin/linux-x64/unica-bootstrap
+          do
+            if [ ! -x "$f" ]; then echo "::error file=$f::not executable"; fail=1; fi
+          done
+          exit $fail
+
+      - name: The Windows launcher is not marked executable
+        run: |
+          if [ -x dsh-unica-plugin/bootstrap/bin/win-x64/unica-bootstrap.exe ]; then
+            echo "::error::unica-bootstrap.exe unexpectedly has the execute bit"
+            exit 1
+          fi
