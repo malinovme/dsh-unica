@@ -39,9 +39,25 @@ export function checkPreset(path, searchDirs = []) {
   }
 
   const mcp = doc.find((r) => r.id === 'mcp-unica')
-  if (!Array.isArray(mcp.config?.args) || !mcp.config.args.includes('--plugin-root')) {
-    throw new Error('the mcp row lost its --plugin-root argument')
+  const args = mcp.config?.args
+  if (!Array.isArray(args) || args.length === 0) throw new Error('the mcp row lost its args')
+  // The launch shape is platform-dependent, so the argument that proves the
+  // plugin root reached the command differs: Windows execs the bootstrap with
+  // `run --plugin-root <root>`, while POSIX runs `sh launch.sh <root>` and the
+  // script derives the rest itself. Accepting only the Windows shape made this
+  // check pass locally and fail on the runner.
+  const command = mcp.config?.command ?? ''
+  const carriesRoot =
+    command.endsWith('unica-bootstrap.exe')
+      ? args.includes('--plugin-root')
+      : command === 'sh'
+        ? args.some((a) => a.endsWith('launch.sh'))
+        : false
+  if (!carriesRoot) {
+    throw new Error(
+      `the mcp row does not pass the plugin root in a recognised launch shape: command="${command}" args=${JSON.stringify(args)}`,
+    )
   }
 
-  return { rows: doc.length, ids, suffix, command: mcp.config.command, args: mcp.config.args }
+  return { rows: doc.length, ids, suffix, command, args }
 }

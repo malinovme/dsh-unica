@@ -38,8 +38,10 @@ function runCapture(args) {
 
 // The workflow step is named for the POSIX branch, but it only exercises that
 // branch when the runner IS POSIX. Pass the platform explicitly so this script
-// tests the branch it claims to test on any host.
-const PLATFORM = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux'
+// tests the branch it claims to test on any host — and so the Windows-only
+// launch shape cannot hide a failure that the runner would hit. CI_PLATFORM
+// overrides it, which is how the POSIX branch is covered from a Windows box.
+const PLATFORM = process.env.CI_PLATFORM ?? (process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux')
 const POSIX = PLATFORM !== 'win32'
 
 for (const dir of [HOME_A, HOME_B]) rmSync(dir, { recursive: true, force: true })
