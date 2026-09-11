@@ -24,6 +24,11 @@ const WORKFLOW = resolve(
   workflowArg ?? join(dirname(dirname(fileURLToPath(import.meta.url))), '..', '.github', 'workflows', 'checks.yml'),
 )
 
+// Printed always: a failure here is usually a resolution or path problem, and
+// seeing both inputs turns a red run into a one-line diagnosis.
+console.log(`workflow    : ${WORKFLOW}`)
+console.log(`search roots: ${searchArgs.length > 0 ? searchArgs.join(', ') : '(ambient + harness)'}`)
+
 const yaml = loadYaml(searchArgs.map((p) => resolve(p)))
 const doc = yaml.load(readFileSync(WORKFLOW, 'utf8'), { schema: yamlWithJsTag(yaml) })
 console.log('name       :', doc.name)

@@ -51,14 +51,16 @@ jobs:
 
       # The workflow itself is a checked artifact. Two runs were lost to errors
       # this step names precisely: a mistyped key, or a job that asserts nothing.
-      # js-yaml is installed into /tmp so the job leaves no node_modules behind.
+      # js-yaml is installed into the plugin directory rather than /tmp so the
+      # module resolves through the same path as it does for a developer running
+      # the check locally; the temporary node_modules is removed afterwards.
       - name: Workflow definition is well formed
+        working-directory: dsh-unica-plugin
         run: |
-          mkdir -p /tmp/ci-deps && cd /tmp/ci-deps
-          npm init -y >/dev/null 2>&1
-          npm install js-yaml --silent
-          cd "$GITHUB_WORKSPACE"
-          node dsh-unica-plugin/tools/validate-workflow.mjs /tmp/ci-deps/node_modules
+          npm install --no-save --no-package-lock js-yaml >/dev/null
+          node -e "console.log('js-yaml resolved from:', require.resolve('js-yaml'))"
+          node tools/validate-workflow.mjs
+          rm -rf node_modules
 
       # CI has no DSH installed, so the shipped `standard` composition the preset
       # copies is absent. A stub template is created first and handed to every
@@ -116,10 +118,9 @@ jobs:
       - name: Generated preset parses and keeps the session rules
         working-directory: dsh-unica-plugin
         run: |
-          npm install --prefix /tmp/ci-yaml js-yaml --silent
-          node tools/check-preset.mjs \
-            /tmp/dsh-ci-preset/.agent-presets/unica-1c/agent.cordis.yml \
-            /tmp/ci-yaml/node_modules
+          npm install --no-save --no-package-lock js-yaml >/dev/null
+          node tools/check-preset.mjs /tmp/dsh-ci-preset/.agent-presets/unica-1c/agent.cordis.yml
+          rm -rf node_modules
 
       - name: Installer rejects an unsupported platform
         working-directory: dsh-unica-plugin
