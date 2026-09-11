@@ -140,6 +140,35 @@ ${envBlock('          ')}
 }
 
 /**
+ * Port rules that must hold for EVERY session, not only while a skill that
+ * documents them happens to be loaded.
+ *
+ * A second `persona` row is not an option: `dsh-persona` registers the persona
+ * section names globally, so a duplicate row collides and fails loud. The rules
+ * are therefore injected into the shipped persona row's own `suffix` template,
+ * which is what makes them permanent for the session.
+ */
+const PERSONA_ANCHOR = 'suffix: Your working directory is {{cwd}}.'
+const PERSONA_SUFFIX = `suffix: >-
+      Your working directory is {{cwd}}.
+
+      Unica rules for this session:
+      - Always pass \`cwd\` explicitly to every \`unica.*\` call. Without it the
+        core resolves the project from the home directory and fails with
+        \`SourceSetNotFound\`; some tools, such as \`unica.role.edit\`, do not
+        accept \`cwd\` at all and resolve nothing.
+      - A failed partial build must be retried once with \`fullRebuild: true\`
+        rather than repeated unchanged. The automatic full retry covers only a
+        structured result after v8-runner exit code 4, so a platform read
+        failure of the partial file list is not retried.
+      - \`unica.meta.add\` cannot set a register's kind. The generator writes
+        \`Balance\`; a register that needs \`Turnovers\` is corrected in the
+        descriptor XML and re-checked.
+      - An existing role cannot be updated by tools: \`unica.role.compile\`
+        skips it even with \`force\`. Edit \`Rights.xml\` and verify with
+        \`unica.role.validate\`.`
+
+/**
  * The Web-GUI target. Web sessions are composed from an agent preset, and the
  * shipped `standard` preset mounts its OWN skill-filesystem row while the web
  * bundle disables the host-plane one — so a profile patch alone would give a Web
@@ -149,6 +178,16 @@ ${envBlock('          ')}
  * presets accept).
  */
 function presetComposition(standardYaml) {
+  // Fail loud instead of shipping a preset whose standing rules were silently
+  // dropped by an upstream edit to the template.
+  if (!standardYaml.includes(PERSONA_ANCHOR)) {
+    throw new Error(
+      `the standard composition no longer carries the expected persona suffix (${PERSONA_ANCHOR}); ` +
+        `the port rules would be lost. Re-check the template before installing.`,
+    )
+  }
+  const withRules = standardYaml.replace(PERSONA_ANCHOR, PERSONA_SUFFIX)
+
   const mcpRow = `
 # ── added by dsh-plugin-unica ────────────────────────────────────────────────
 # The unica MCP bridge. Its 74 tools reach the model as
@@ -178,7 +217,7 @@ ${envBlock('      ')}
       - '${SKILLS}'
     watch: false
 `
-  return `${standardYaml.trimEnd()}\n${mcpRow}`
+  return `${withRules.trimEnd()}\n${mcpRow}`
 }
 
 const presetMeta = () => `name: Unica 1C

@@ -40,6 +40,92 @@ const SOURCE_PLUGIN =
 const SERVER_NAME = 'unica'
 const NAMESPACE = `mcp__${SERVER_NAME}__`
 
+/**
+ * Port-level corrections applied on top of the upstream skill text.
+ *
+ * The port does not fork unica, and these are not stylistic edits: each one
+ * records a behaviour found in the field where an upstream tool does not cover
+ * the path its own documentation promises. They live here, next to the rename
+ * step, so a future regeneration cannot silently drop them.
+ *
+ * Each patch must name the tool it is about, because the tool names are
+ * rewritten AFTER these are inserted.
+ */
+const PORT_NOTES = {
+  // Defect: a partial load builds a UTF-8-with-BOM file list holding Cyrillic
+  // relative paths; the platform refuses to read it. Upstream's own text in this
+  // skill says the automatic full retry fires only after exit code 4 with a
+  // structured result, so this failure class gets no retry.
+  'v8-runner': `## Правка порта: полная пересборка при неудаче частичной
+
+Сбой чтения файла-списка при частичной загрузке (платформа не читает
+\`build/temp/partial-lists/partial-list-*.txt\`: записан UTF-8 с BOM, пути
+относительные и с кириллицей вида \`Documents\\ЗаказПокупателя.xml\`) **не
+приводит к автоматическому полному повтору**. Автоматический повтор, описанный
+выше, вызывает только корректный структурированный результат после внешнего
+кода \`4\`; этот класс ошибки в него не попадает.
+
+Поэтому при такой ошибке не повторяй вызов с теми же аргументами, а сразу
+перезапусти ту же операцию с \`fullRebuild: true\`. Для единичных изменений это
+и дешевле: полная сборка одной цели обычно быстрее разбора частичной.`,
+
+  // Defect: the generated descriptor writes the singular form, while upstream's
+  // own specification and this skill use the plural vocabulary.
+  'register-design': `## Правка порта: вид регистра задаётся не инструментом
+
+\`unica.meta.add\` и \`unica.meta.edit\` **не принимают \`RegisterType\`** в
+\`setProperties\`. Генератор в этом случае пишет
+\`<RegisterType>Balance</RegisterType>\`, тогда как спецификация
+\`references/specs/1c-config-objects-spec.md\` называет значения \`Balances\` и
+\`Turnovers\`. Вид регистра выбирается выше по тексту, но задать его через MCP
+нельзя.
+
+Практическое следствие: после \`meta.add\` регистр накопления получает
+\`Balance\` независимо от замысла. Чтобы получить \`Turnovers\`, правь
+\`<RegisterType>\` в XML дескриптора напрямую и проверяй результат \`cf.validate\`
+или \`meta.info\`. Не выдавай \`Balance\` за выбранный вид — это дефолт
+генератора, а не решение.`,
+
+  // Defect: no tool covers updating an existing role.
+  'role-compile': `## Правка порта: обновление существующей роли инструментами не покрыто
+
+Два ограничения, оба проверены на живом проекте:
+
+- \`unica.role.edit\` **не принимает \`cwd\`** и уходит в домашний каталог,
+  завершаясь \`source_set_unknown\`;
+- \`unica.role.compile\` **всегда пропускает существующую роль** — даже с
+  \`Force: true\` отвечает \`[SKIP] Role ... already exists\`.
+
+Значит штатного способа дописать права в уже существующую роль у инструментов
+нет. Рабочий путь: прочитать текущее состояние (\`role.info\`, \`cf.info\`),
+затем править \`Rights.xml\` напрямую, не затирая существующие права, и
+завершать проверкой \`role.validate\`. Не вызывай \`role.compile\` по
+существующей роли в надежде на перезапись — вызов молча ничего не сделает.`,
+
+  // Defect: without cwd the core resolves the project from the home directory.
+  'code-patch': `## Правка порта: \`cwd\` обязателен
+
+Вызов без \`cwd\` ищет источник в домашнем каталоге и падает с
+\`SourceSetNotFound\`. Всегда передавай \`cwd\` рабочей области явно — правило
+относится к любому инструменту \`unica.*\`, а не только к этому.`,
+}
+
+/** Injects a port note right after the skill's `## MCP routing` section heading. */
+function applyPortNote(skillDir, text, stats) {
+  const note = PORT_NOTES[skillDir]
+  if (note === undefined) return text
+  const anchor = /^## MCP routing[ \t]*$/m
+  const match = anchor.exec(text)
+  // Fail loud rather than ship a skill whose correction silently vanished: an
+  // upstream edit that renames this heading is exactly when that would happen.
+  if (match === null) {
+    throw new Error(`port note for "${skillDir}" has no "## MCP routing" anchor to attach to`)
+  }
+  const at = match.index + match[0].length
+  stats.portNotes += 1
+  return `${text.slice(0, at)}\n\n${note}${text.slice(at)}`
+}
+
 async function main() {
   if (!existsSync(SOURCE_PLUGIN)) throw new Error(`unica payload not found: ${SOURCE_PLUGIN}`)
   const tools = JSON.parse(await readFile(CATALOG, 'utf8'))
@@ -105,6 +191,7 @@ async function main() {
     skills: 0,
     rewrittenFiles: 0,
     replacements: 0,
+    portNotes: 0,
     unknownToolRefs: new Set(),
     extraFiles: 0,
   }
@@ -131,7 +218,10 @@ async function main() {
           await writeFile(d, buf)
           continue
         }
-        const text = buf.toString('utf8')
+        let text = buf.toString('utf8')
+        // Port corrections go in before the rename, so a note can name the tool
+        // the ordinary way and still come out rewritten consistently.
+        if (entry.name === 'SKILL.md') text = applyPortNote(dir, text, stats)
         // Catch any tool reference the live catalog does not know about, so a
         // stale skill is reported rather than silently left pointing nowhere.
         for (const m of text.matchAll(/unica\.[a-z_]+(?:\.[a-z_]+)+/g)) {
@@ -166,11 +256,13 @@ async function main() {
     tools: tools.length,
     skills: stats.skills,
     referenceFiles: refFiles,
+    portNotes: stats.portNotes,
     rewrittenFiles: stats.rewrittenFiles,
     replacements: stats.replacements,
     extraFiles: stats.extraFiles,
     unknownToolRefs: [...stats.unknownToolRefs].sort(),
     skillsWithoutToolRefs: perSkill.filter((s) => s.toolRefs === 0).map((s) => s.skill),
+    portNotesApplied: Object.keys(PORT_NOTES).map((s) => `unica-${s}`).sort(),
   }
   await writeFile(join(TOOLS_DIR, 'build-report.json'), `${JSON.stringify(report, null, 2)}\n`)
   await writeFile(join(OUT_ROOT, 'tool-map.json'), `${JSON.stringify(Object.fromEntries(mapping), null, 2)}\n`)

@@ -13,6 +13,21 @@ allowed-tools:
 
 ## MCP routing
 
+## Правка порта: обновление существующей роли инструментами не покрыто
+
+Два ограничения, оба проверены на живом проекте:
+
+- `mcp__unica__unica_role_edit_9929ddb32505` **не принимает `cwd`** и уходит в домашний каталог,
+  завершаясь `source_set_unknown`;
+- `mcp__unica__unica_role_compile_e48782f8dcad` **всегда пропускает существующую роль** — даже с
+  `Force: true` отвечает `[SKIP] Role ... already exists`.
+
+Значит штатного способа дописать права в уже существующую роль у инструментов
+нет. Рабочий путь: прочитать текущее состояние (`role.info`, `cf.info`),
+затем править `Rights.xml` напрямую, не затирая существующие права, и
+завершать проверкой `role.validate`. Не вызывай `role.compile` по
+существующей роли в надежде на перезапись — вызов молча ничего не сделает.
+
 - Preferred path: use MCP `unica` tool `mcp__unica__unica_role_compile_e48782f8dcad`; `unica` owns XML/JSON DSL work and refreshes related workspace caches after mutations.
 - Do not call internal MCP/CLI adapters directly. They are hidden behind `unica` and synchronized by the orchestrator.
 - Execution path: call MCP `unica` tool `mcp__unica__unica_role_compile_e48782f8dcad`; skill-local operation scripts are not part of the workflow.

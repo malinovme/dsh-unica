@@ -7,6 +7,21 @@ description: "Проектирование регистров 1С. Исполь�
 
 ## MCP routing
 
+## Правка порта: вид регистра задаётся не инструментом
+
+`mcp__unica__unica_meta_add_0bd12ddced5e` и `mcp__unica__unica_meta_edit_fbcdf19e5751` **не принимают `RegisterType`** в
+`setProperties`. Генератор в этом случае пишет
+`<RegisterType>Balance</RegisterType>`, тогда как спецификация
+`references/specs/1c-config-objects-spec.md` называет значения `Balances` и
+`Turnovers`. Вид регистра выбирается выше по тексту, но задать его через MCP
+нельзя.
+
+Практическое следствие: после `meta.add` регистр накопления получает
+`Balance` независимо от замысла. Чтобы получить `Turnovers`, правь
+`<RegisterType>` в XML дескриптора напрямую и проверяй результат `cf.validate`
+или `meta.info`. Не выдавай `Balance` за выбранный вид — это дефолт
+генератора, а не решение.
+
 - Preferred path: use MCP `unica` tools `mcp__unica__unica_project_map_7cc63b822c1d`, `mcp__unica__unica_meta_info_524a81764d16`, `mcp__unica__unica_meta_add_0bd12ddced5e`, `mcp__unica__unica_meta_edit_fbcdf19e5751`, `mcp__unica__unica_code_search_70af4c0986a7`, `mcp__unica__unica_code_outline_dc58fe5ade0e`, `mcp__unica__unica_dcs_info_e9d039200abc`, `mcp__unica__unica_code_diagnostics_43785e27e86c`, and `mcp__unica__unica_runtime_execute_0cd62fbc3716`.
 - По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `mcp__unica__unica_runtime_execute_0cd62fbc3716` с `dryRun: true`
 показывает запланированную команду без побочных эффектов, а с `dryRun: false`

@@ -44,9 +44,19 @@ mkdirSync(TMP, { recursive: true })
 
 console.log(`platform under test: ${PLATFORM} (${POSIX ? 'launch.sh branch' : 'direct bootstrap branch'})`)
 console.log('--- step: create a stub preset template')
+// The stub must carry the persona row the port rules attach to, with the exact
+// suffix text the installer asserts. Without it the installer refuses by design.
 writeFileSync(
   STUB,
-  ["- id: persona", "  name: '@deepseek-ai/dsh-persona'", '- id: skill-filesystem', "  name: '@deepseek-ai/dsh-skill-filesystem'", ''].join('\n'),
+  [
+    '- id: persona',
+    "  name: '@deepseek-ai/dsh-persona'",
+    '  config:',
+    '    suffix: Your working directory is {{cwd}}.',
+    '- id: skill-filesystem',
+    "  name: '@deepseek-ai/dsh-skill-filesystem'",
+    '',
+  ].join('\n'),
   'utf8',
 )
 
@@ -62,14 +72,40 @@ console.log('--- step: generated preset keeps the template and adds both rows')
 const preset = join(HOME_B, '.agent-presets', 'unica-1c', 'agent.cordis.yml')
 if (!existsSync(preset)) throw new Error(`preset was not written: ${preset}`)
 const text = readFileSync(preset, 'utf8')
-const needles = ['id: persona', 'id: skill-filesystem', 'id: mcp-unica', 'id: skill-filesystem-unica', 'serverName: unica', 'UNICA_PROVIDER_STATE_DIR']
+const needles = [
+  'id: persona',
+  'id: skill-filesystem',
+  'id: mcp-unica',
+  'id: skill-filesystem-unica',
+  'serverName: unica',
+  'UNICA_PROVIDER_STATE_DIR',
+  // The session rules must reach the persona suffix, not just the skill files.
+  'SourceSetNotFound',
+  'fullRebuild: true',
+  'Turnovers',
+  'Rights.xml',
+]
 let missing = 0
 for (const needle of needles) {
   const ok = text.includes(needle)
   if (!ok) missing += 1
   console.log(`    ${ok ? 'ok     ' : 'MISSING'} ${needle}`)
 }
-if (missing > 0) throw new Error(`${missing} expected rows are missing from the generated preset`)
+if (missing > 0) throw new Error(`${missing} expected items are missing from the generated preset`)
+
+console.log('--- step: port corrections are present in the skills')
+run(['tools/check-port-notes.mjs'])
+
+// The preset is also judged by DSH's own discovery and health check, so a
+// composition the hand-rolled assertions accept but DSH refuses cannot pass.
+// This one runs with the REAL environment: it has to locate the harness, which
+// deliberately is not on the stripped runner PATH built above.
+console.log('--- step: DSH health-checks the generated preset')
+execFileSync(process.execPath, ['tools/validate-preset.mjs', join(HOME_B, '.agent-presets')], {
+  cwd: PLUGIN,
+  stdio: 'inherit',
+  env: process.env,
+})
 
 console.log('--- step: installer rejects an unsupported platform')
 let rejected = false

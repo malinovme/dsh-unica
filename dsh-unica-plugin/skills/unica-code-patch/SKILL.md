@@ -11,6 +11,12 @@ allowed-tools:
 
 ## MCP routing
 
+## Правка порта: `cwd` обязателен
+
+Вызов без `cwd` ищет источник в домашнем каталоге и падает с
+`SourceSetNotFound`. Всегда передавай `cwd` рабочей области явно — правило
+относится к любому инструменту `unica.*`, а не только к этому.
+
 - Preferred path: use MCP `unica` tool `mcp__unica__unica_code_patch_539ea6e2f208`; `unica` validates the source set, supported-object state, selector, and exact in-memory BSL postimage before staging and atomic publication.
 - Do not call internal MCP/CLI adapters directly. They are hidden behind `unica` and synchronized by the orchestrator.
 - Always call `mcp__unica__unica_code_patch_539ea6e2f208` with `dryRun: true` first. Call it with `dryRun: false` only after the user explicitly asked to apply this exact change.

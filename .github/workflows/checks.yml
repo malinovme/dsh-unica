@@ -41,6 +41,14 @@ jobs:
         working-directory: dsh-unica-plugin
         run: node tools/surface-summary.mjs .
 
+      # The port's own corrections to upstream skill text live in a table inside
+      # the generator. Losing one would be silent, so each is verified in the
+      # output: present exactly once, after the routing section, and carrying
+      # already-namespaced tool names.
+      - name: Port corrections are present in the skills
+        working-directory: dsh-unica-plugin
+        run: node tools/check-port-notes.mjs
+
       # The workflow itself is a checked artifact. Two runs were lost to errors
       # this step names precisely: a mistyped key, or a job that asserts nothing.
       # js-yaml is installed into /tmp so the job leaves no node_modules behind.
@@ -61,6 +69,8 @@ jobs:
           cat > /tmp/ci-standard.cordis.yml <<'YAML'
           - id: persona
             name: '@deepseek-ai/dsh-persona'
+            config:
+              suffix: Your working directory is {{cwd}}.
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
           YAML
@@ -99,6 +109,16 @@ jobs:
             fi
           done
           echo "generated preset carries the template plus both injected rows"
+
+      # The session rules injected into the persona suffix must survive as YAML,
+      # not merely as text: a folded scalar that broke on indentation would parse
+      # to the wrong thing and lose every rule without any error.
+      - name: Generated preset parses and keeps the session rules
+        working-directory: dsh-unica-plugin
+        run: |
+          npm install --prefix /tmp/ci-yaml js-yaml --silent
+          NODE_PATH=/tmp/ci-yaml/node_modules \
+            node tools/check-preset.mjs /tmp/dsh-ci-preset/.agent-presets/unica-1c/agent.cordis.yml
 
       - name: Installer rejects an unsupported platform
         working-directory: dsh-unica-plugin

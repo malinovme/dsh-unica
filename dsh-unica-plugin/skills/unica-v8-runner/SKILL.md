@@ -13,6 +13,19 @@ allowed-tools:
 
 ## MCP routing
 
+## Правка порта: полная пересборка при неудаче частичной
+
+Сбой чтения файла-списка при частичной загрузке (платформа не читает
+`build/temp/partial-lists/partial-list-*.txt`: записан UTF-8 с BOM, пути
+относительные и с кириллицей вида `Documents\ЗаказПокупателя.xml`) **не
+приводит к автоматическому полному повтору**. Автоматический повтор, описанный
+выше, вызывает только корректный структурированный результат после внешнего
+кода `4`; этот класс ошибки в него не попадает.
+
+Поэтому при такой ошибке не повторяй вызов с теми же аргументами, а сразу
+перезапусти ту же операцию с `fullRebuild: true`. Для единичных изменений это
+и дешевле: полная сборка одной цели обычно быстрее разбора частичной.
+
 - Preferred path: use MCP `unica` tool `mcp__unica__unica_runtime_execute_0cd62fbc3716` both to preview typed v8-runner arguments and to run them.
 - По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `dryRun: true` показывает запланированную команду без побочных эффектов, а `dryRun: false` действительно исполняет операцию и возвращает её терминальный результат в этом же вызове. Preview исполнением не является — не выдавай его за проверку runtime. Перед применённым вызовом скажи пользователю, чем операция рискует: результат несёт названную причину (`runtime_risk_critical_non_abortable`, `runtime_risk_publication_without_bounded_recovery`, `runtime_risk_unproven_process_ownership`, `runtime_risk_detached_child`) предупреждением.
 - Длинную работу, которую вызов ждать не должен, запускай через `mcp__unica__unica_runtime_job_start_64e0bb584ac4` как явно выбранный workflow с наблюдением через `status`/`wait`/`logs`. Не используй `mcp__unica__unica_runtime_job_start_64e0bb584ac4` как запасной путь. Не обходи контракт прямым runner-ом или через `unica.build.*`.
