@@ -41,11 +41,46 @@ jobs:
         working-directory: dsh-unica-plugin
         run: node tools/surface-summary.mjs .
 
-      # The install patch and the preset composition are generated, so they are
-      # only ever proven by running the generator.
+      # The generated patch and preset composition are only ever proven by
+      # running the generator. CI has no DSH installed, so the preset is built
+      # from a stub template passed with --standard; that keeps the generator
+      # itself under test even though the real `standard` composition is absent.
       - name: Installer composes a plan (POSIX branch)
         working-directory: dsh-unica-plugin
         run: node install.mjs --dsh-home /tmp/dsh-ci --target both --dry-run
+
+      - name: Installer builds a preset from a stub template
+        working-directory: dsh-unica-plugin
+        run: |
+          cat > /tmp/ci-standard.cordis.yml <<'YAML'
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          YAML
+          node install.mjs --dsh-home /tmp/dsh-ci-preset --target preset \
+            --standard /tmp/ci-standard.cordis.yml
+
+      # Proves the generator appended its rows to the template instead of
+      # replacing it, and that it emitted the rows it promises.
+      - name: Generated preset keeps the template and adds both rows
+        run: |
+          preset=/tmp/dsh-ci-preset/.agent-presets/unica-1c/agent.cordis.yml
+          test -f "$preset"
+          for needle in \
+            "id: persona" \
+            "id: skill-filesystem" \
+            "id: mcp-unica" \
+            "id: skill-filesystem-unica" \
+            "serverName: unica" \
+            "UNICA_PROVIDER_STATE_DIR"
+          do
+            if ! grep -q "$needle" "$preset"; then
+              echo "::error file=$preset::missing '$needle' in the generated preset"
+              exit 1
+            fi
+          done
+          echo "generated preset carries the template plus both injected rows"
 
       - name: Installer rejects an unsupported platform
         working-directory: dsh-unica-plugin

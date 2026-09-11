@@ -1,6 +1,12 @@
 // Installs the DSH port of unica into a DSH home.
 //
 //   node install.mjs [--dsh-home <path>] [--target preset|profile|both] [--dry-run]
+//                    [--profile <name>] [--platform win32|darwin|linux]
+//                    [--standard <composition.cordis.yml>]
+//
+// `--standard` builds the preset from a given composition instead of the shipped
+// `standard` one. It exists for CI, which has no DSH installed; a normal install
+// finds the real template by itself.
 //
 // Why an installer instead of a static tree: cordis patch files and agent-preset
 // composition files support `!!js` expressions but have no plugin-root
@@ -195,19 +201,29 @@ async function main() {
 
   if (TARGET === 'preset' || TARGET === 'both') {
     // The shipped `standard` composition is the template the preset is copied
-    // from. Look beside this plugin first (monorepo / sibling install), then in
-    // the DSH installation the launcher actually runs from.
-    const rel = join('@deepseek-ai', 'dsh-agent-presets', 'presets', 'standard', 'agent.cordis.yml')
-    const candidates = [
-      join(PLUGIN_ROOT, 'node_modules', rel),
-      join(dirname(PLUGIN_ROOT), 'node_modules', rel),
-      ...installedHarnessRoots().map((root) => join(root, 'node_modules', rel)),
-    ]
-    const standardPath = candidates.find((p) => existsSync(p))
-    if (standardPath === undefined) {
-      throw new Error(
-        `cannot locate the shipped 'standard' preset composition. Looked at:\n  ${candidates.join('\n  ')}\nPass DSH_INSTALL_ROOT=<the directory containing node_modules of your DSH install>.`,
-      )
+    // from. `--standard <path>` overrides the search: CI has no DSH installed,
+    // and this keeps the generator itself testable there.
+    const explicit = arg('standard', undefined)
+    let standardPath
+    if (explicit !== undefined) {
+      standardPath = resolve(explicit)
+      if (!existsSync(standardPath)) throw new Error(`--standard points at a file that does not exist: ${standardPath}`)
+    } else {
+      // Look beside this plugin first (monorepo / sibling install), then in the
+      // DSH installation the launcher actually runs from.
+      const rel = join('@deepseek-ai', 'dsh-agent-presets', 'presets', 'standard', 'agent.cordis.yml')
+      const candidates = [
+        join(PLUGIN_ROOT, 'node_modules', rel),
+        join(dirname(PLUGIN_ROOT), 'node_modules', rel),
+        ...installedHarnessRoots().map((root) => join(root, 'node_modules', rel)),
+      ]
+      standardPath = candidates.find((p) => existsSync(p))
+      if (standardPath === undefined) {
+        throw new Error(
+          `cannot locate the shipped 'standard' preset composition. Looked at:\n  ${candidates.join('\n  ')}\n` +
+            `Pass DSH_INSTALL_ROOT=<the directory containing node_modules of your DSH install>, or --standard <path> to build from another composition.`,
+        )
+      }
     }
     const presetDir = join(DSH_HOME, '.agent-presets', PRESET_ID)
     await emit(join(presetDir, 'preset.yml'), presetMeta())
