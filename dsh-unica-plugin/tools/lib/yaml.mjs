@@ -8,12 +8,21 @@ import { harnessNodeModules } from './harness.mjs'
 const require = createRequire(import.meta.url)
 
 /**
- * @param extraDirs - node_modules directories to try before the harness
- * @returns the js-yaml module
+ * @param extraDirs - node_modules directories (or their parents) to try before
+ *   the harness; a path that already ends in `node_modules` is used as one
  */
 export function loadYaml(extraDirs = []) {
-  const searchDirs = [...extraDirs, ...harnessNodeModules()]
-  for (const dir of [undefined, ...searchDirs]) {
+  // A root may be given either way round: the directory that CONTAINS
+  // node_modules, or node_modules itself. `createRequire` resolves relative to
+  // the file it is given, so both readings are tried explicitly rather than
+  // guessed.
+  const bases = []
+  for (const dir of extraDirs) {
+    bases.push(dir, join(dir, 'node_modules'), join(dir, '..'))
+  }
+  bases.push(...harnessNodeModules().map((nm) => join(nm, '..')), ...harnessNodeModules())
+
+  for (const dir of [undefined, ...bases]) {
     try {
       return dir === undefined ? require('js-yaml') : createRequire(join(dir, 'noop.js'))('js-yaml')
     } catch {
@@ -22,7 +31,7 @@ export function loadYaml(extraDirs = []) {
   }
   throw new Error(
     `js-yaml not found. Install it (npm install js-yaml) or point NODE_PATH at a node_modules that has it. ` +
-      `Looked in: ${['(ambient)', ...searchDirs].join(', ')}`,
+      `Looked in: ${['(ambient)', ...new Set(bases)].join(', ')}`,
   )
 }
 

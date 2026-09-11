@@ -5,6 +5,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { harnessNodeModules } from './lib/harness.mjs'
 
 const PLUGIN = resolve(import.meta.dirname, '..')
 const TMP = process.env.TEMP ?? '/tmp'
@@ -21,7 +22,9 @@ function run(args, opts = {}) {
   execFileSync(process.execPath, args, {
     cwd: PLUGIN,
     stdio: 'inherit',
-    env: { ...process.env, PATH: runnerPath, Path: runnerPath, ...opts.env },
+    // `realEnv` keeps the ambient PATH: a step that has to find the harness for
+    // js-yaml cannot use the stripped one.
+    env: opts.realEnv === true ? process.env : { ...process.env, PATH: runnerPath, Path: runnerPath, ...opts.env },
   })
 }
 
@@ -92,6 +95,15 @@ for (const needle of needles) {
   console.log(`    ${ok ? 'ok     ' : 'MISSING'} ${needle}`)
 }
 if (missing > 0) throw new Error(`${missing} expected items are missing from the generated preset`)
+
+// The stripped runner PATH above hides the harness, which these two need for
+// js-yaml, so they get the real environment plus an explicit search root. This
+// mirrors what the workflow does with its /tmp install.
+const harnessNM = harnessNodeModules()[0]
+if (harnessNM === undefined) throw new Error('cannot locate the harness to resolve js-yaml from; set DSH_INSTALL_ROOT')
+
+console.log('--- step: workflow definition is well formed')
+run(['tools/validate-workflow.mjs', harnessNM], { realEnv: true })
 
 console.log('--- step: port corrections are present in the skills')
 run(['tools/check-port-notes.mjs'])

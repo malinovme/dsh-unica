@@ -58,7 +58,7 @@ jobs:
           npm init -y >/dev/null 2>&1
           npm install js-yaml --silent
           cd "$GITHUB_WORKSPACE"
-          NODE_PATH=/tmp/ci-deps/node_modules node dsh-unica-plugin/tools/validate-workflow.mjs
+          node dsh-unica-plugin/tools/validate-workflow.mjs /tmp/ci-deps/node_modules
 
       # CI has no DSH installed, so the shipped `standard` composition the preset
       # copies is absent. A stub template is created first and handed to every

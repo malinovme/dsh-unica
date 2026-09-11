@@ -2,16 +2,29 @@
 // locally rather than as a red run on GitHub.
 //
 //   node tools/validate-workflow.mjs [path-to-workflow]
-import { readFileSync } from 'node:fs'
+//   node tools/validate-workflow.mjs [path-to-workflow] [js-yaml-root ...]
+//
+// Arguments are told apart by what they are, not by position: one that resolves
+// to an existing file is the workflow, everything else is a js-yaml search root.
+// A positional convention cannot be used here, because PowerShell drops an empty
+// argument entirely, which would shift a root into the workflow slot.
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadYaml, yamlWithJsTag } from './lib/yaml.mjs'
 
+const argv = process.argv.slice(2).filter((a) => a !== '')
+const workflowArg = argv.find((a) => {
+  const p = resolve(a)
+  return existsSync(p) && p.endsWith('.yml')
+})
+const searchArgs = argv.filter((a) => a !== workflowArg)
+
 const WORKFLOW = resolve(
-  process.argv[2] ?? join(dirname(dirname(fileURLToPath(import.meta.url))), '..', '.github', 'workflows', 'checks.yml'),
+  workflowArg ?? join(dirname(dirname(fileURLToPath(import.meta.url))), '..', '.github', 'workflows', 'checks.yml'),
 )
 
-const yaml = loadYaml(process.argv.slice(3).map((p) => resolve(p)))
+const yaml = loadYaml(searchArgs.map((p) => resolve(p)))
 const doc = yaml.load(readFileSync(WORKFLOW, 'utf8'), { schema: yamlWithJsTag(yaml) })
 console.log('name       :', doc.name)
 console.log('triggers   :', Object.keys(doc.on).join(', '))
