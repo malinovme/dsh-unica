@@ -41,16 +41,22 @@ jobs:
         working-directory: dsh-unica-plugin
         run: node tools/surface-summary.mjs .
 
-      # The generated patch and preset composition are only ever proven by
-      # running the generator. CI has no DSH installed, so the preset is built
-      # from a stub template passed with --standard; that keeps the generator
-      # itself under test even though the real `standard` composition is absent.
-      - name: Installer composes a plan (POSIX branch)
-        working-directory: dsh-unica-plugin
-        run: node install.mjs --dsh-home /tmp/dsh-ci --target both --dry-run
+      # The workflow itself is a checked artifact. Two runs were lost to errors
+      # this step names precisely: a mistyped key, or a job that asserts nothing.
+      # js-yaml is installed into /tmp so the job leaves no node_modules behind.
+      - name: Workflow definition is well formed
+        run: |
+          mkdir -p /tmp/ci-deps && cd /tmp/ci-deps
+          npm init -y >/dev/null 2>&1
+          npm install js-yaml --silent
+          cd "$GITHUB_WORKSPACE"
+          NODE_PATH=/tmp/ci-deps/node_modules node dsh-unica-plugin/tools/validate-workflow.mjs
 
-      - name: Installer builds a preset from a stub template
-        working-directory: dsh-unica-plugin
+      # CI has no DSH installed, so the shipped `standard` composition the preset
+      # copies is absent. A stub template is created first and handed to every
+      # installer call that builds a preset, which keeps the generator itself
+      # under test instead of skipping the check that depends on it.
+      - name: Create a stub preset template
         run: |
           cat > /tmp/ci-standard.cordis.yml <<'YAML'
           - id: persona
@@ -58,6 +64,18 @@ jobs:
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
           YAML
+
+      # Both rows of the plan on a real POSIX platform, which is the branch the
+      # build machine cannot exercise: Git-bash does not start there.
+      - name: Installer composes a plan (POSIX branch)
+        working-directory: dsh-unica-plugin
+        run: |
+          node install.mjs --dsh-home /tmp/dsh-ci --target both --dry-run \
+            --standard /tmp/ci-standard.cordis.yml
+
+      - name: Installer builds a preset from the stub template
+        working-directory: dsh-unica-plugin
+        run: |
           node install.mjs --dsh-home /tmp/dsh-ci-preset --target preset \
             --standard /tmp/ci-standard.cordis.yml
 
