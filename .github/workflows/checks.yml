@@ -117,8 +117,9 @@ jobs:
         working-directory: dsh-unica-plugin
         run: |
           npm install --prefix /tmp/ci-yaml js-yaml --silent
-          NODE_PATH=/tmp/ci-yaml/node_modules \
-            node tools/check-preset.mjs /tmp/dsh-ci-preset/.agent-presets/unica-1c/agent.cordis.yml
+          node tools/check-preset.mjs \
+            /tmp/dsh-ci-preset/.agent-presets/unica-1c/agent.cordis.yml \
+            /tmp/ci-yaml/node_modules
 
       - name: Installer rejects an unsupported platform
         working-directory: dsh-unica-plugin

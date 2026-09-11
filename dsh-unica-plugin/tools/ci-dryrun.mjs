@@ -98,8 +98,15 @@ run(['tools/check-port-notes.mjs'])
 
 // The preset is also judged by DSH's own discovery and health check, so a
 // composition the hand-rolled assertions accept but DSH refuses cannot pass.
-// This one runs with the REAL environment: it has to locate the harness, which
-// deliberately is not on the stripped runner PATH built above.
+// These two run with the REAL environment: they have to locate the harness,
+// which deliberately is not on the stripped runner PATH built above.
+console.log('--- step: generated preset parses and keeps the session rules')
+execFileSync(process.execPath, ['tools/check-preset.mjs', preset], {
+  cwd: PLUGIN,
+  stdio: 'inherit',
+  env: process.env,
+})
+
 console.log('--- step: DSH health-checks the generated preset')
 execFileSync(process.execPath, ['tools/validate-preset.mjs', join(HOME_B, '.agent-presets')], {
   cwd: PLUGIN,

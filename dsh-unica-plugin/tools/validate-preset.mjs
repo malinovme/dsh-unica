@@ -11,23 +11,9 @@
 // of this plugin, so the harness location has to be supplied: DSH_INSTALL_ROOT,
 // or a node_modules directory on PATH. Without either, the check cannot run.
 import { existsSync } from 'node:fs'
-import { delimiter, join, resolve, sep } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-
-function harnessRoots() {
-  const roots = []
-  const explicit = process.env.DSH_INSTALL_ROOT
-  if (explicit !== undefined && explicit !== '') roots.push(explicit)
-  // Windows env names are case-insensitive and Node keeps the original spelling.
-  const pathKey = Object.keys(process.env).find((k) => k.toLowerCase() === 'path')
-  const tail = `.bin${sep}`
-  for (const entry of (process.env[pathKey] ?? '').split(delimiter)) {
-    const at = entry.endsWith(tail) ? entry.length - tail.length : entry.endsWith('.bin') ? entry.length - '.bin'.length : -1
-    const prefix = `node_modules${sep}`
-    if (at > 0 && entry.slice(0, at).endsWith(prefix)) roots.push(entry.slice(0, at - prefix.length))
-  }
-  return [...new Set(roots)]
-}
+import { harnessRoots } from './lib/harness.mjs'
 
 const roots = harnessRoots()
 const moduleUrl = roots

@@ -3,25 +3,16 @@
 //
 //   node tools/validate-workflow.mjs [path-to-workflow]
 import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { loadYaml, yamlWithJsTag } from './lib/yaml.mjs'
 
 const WORKFLOW = resolve(
   process.argv[2] ?? join(dirname(dirname(fileURLToPath(import.meta.url))), '..', '.github', 'workflows', 'checks.yml'),
 )
 
-// js-yaml ships with the DSH installation rather than with this plugin, so
-// resolve it from the nearest node_modules instead of hardcoding a path.
-const require = createRequire(import.meta.url)
-let yaml
-try {
-  yaml = require('js-yaml')
-} catch {
-  throw new Error('js-yaml not found — run with NODE_PATH pointing at a node_modules that has it, or from the DSH checkout')
-}
-
-const doc = yaml.load(readFileSync(WORKFLOW, 'utf8'))
+const yaml = loadYaml(process.argv.slice(3).map((p) => resolve(p)))
+const doc = yaml.load(readFileSync(WORKFLOW, 'utf8'), { schema: yamlWithJsTag(yaml) })
 console.log('name       :', doc.name)
 console.log('triggers   :', Object.keys(doc.on).join(', '))
 console.log('permissions:', JSON.stringify(doc.permissions))
