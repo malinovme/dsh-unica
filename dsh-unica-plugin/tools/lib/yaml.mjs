@@ -42,8 +42,20 @@ export function loadYaml(extraDirs = []) {
  * `disabled: !!js process.platform === 'win32'`. Plain js-yaml rejects the
  * unknown tag, and stripping the tag would hide a genuinely broken document, so
  * it is declared as a pass-through scalar instead.
+ *
+ * The schema-extension API exists in js-yaml v4 and is absent from the v5
+ * CommonJS build, where `DEFAULT_SCHEMA` is undefined and this would fail with
+ * a bare "cannot read properties of undefined". Saying so outright is worth the
+ * two lines: a version drift between the harness and a CI install is exactly how
+ * this breaks.
  */
 export function yamlWithJsTag(yaml) {
+  if (yaml?.DEFAULT_SCHEMA?.extend === undefined || typeof yaml.Type !== 'function') {
+    throw new Error(
+      'the resolved js-yaml does not expose the v4 schema API (DEFAULT_SCHEMA.extend / Type). ' +
+        'Install js-yaml@4 — that is what DSH ships, and what this check is written against.',
+    )
+  }
   return yaml.DEFAULT_SCHEMA.extend([
     new yaml.Type('tag:yaml.org,2002:js', {
       kind: 'scalar',

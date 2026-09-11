@@ -57,7 +57,7 @@ jobs:
       - name: Workflow definition is well formed
         working-directory: dsh-unica-plugin
         run: |
-          npm install --no-save --no-package-lock js-yaml >/dev/null
+          npm install --no-save --no-package-lock js-yaml@4 >/dev/null
           node -e "console.log('js-yaml resolved from:', require.resolve('js-yaml'))"
           node tools/validate-workflow.mjs
           rm -rf node_modules
@@ -118,7 +118,7 @@ jobs:
       - name: Generated preset parses and keeps the session rules
         working-directory: dsh-unica-plugin
         run: |
-          npm install --no-save --no-package-lock js-yaml >/dev/null
+          npm install --no-save --no-package-lock js-yaml@4 >/dev/null
           node tools/check-preset.mjs /tmp/dsh-ci-preset/.agent-presets/unica-1c/agent.cordis.yml
           rm -rf node_modules
 
