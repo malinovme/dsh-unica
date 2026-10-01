@@ -21,6 +21,10 @@ build-report.json
 .unica-cache/
 
 # Scratch directories used while testing the installer and the wrappers.
+#
+# These are matched by prefix on purpose: a fixed list of names had already let
+# one of them (`.profiles/`, a fake DSH home for the profile tests) reach a
+# commit, because the list only grows when someone remembers to add to it.
 .probe-*/
 .verifytest*/
 .ps1test*/
@@ -28,3 +32,12 @@ build-report.json
 .envtest/
 .localrel/
 .finaltest/
+.profiles/
+.vtest/
+.vinstall/
+.shcheck/
+.relbuild/
+.relcheck*/
+.mactest/
+.rebuild/
+.diag*/
