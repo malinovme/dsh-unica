@@ -130,7 +130,7 @@ jobs:
           # Nothing but comments and the `insert:` keys themselves may sit in
           # column 1. A top-level `- id:` entry is read as an override ADDRESS,
           # not a declaration, so the row is silently dropped from the profile.
-          stray=$(grep -nE '^[^ #]' "$patch" | grep -v '^- insert:$' || true)
+          stray=$(grep -nE '^[^ #]' "$patch" | grep -vE '^[0-9]+:- insert:$' || true)
           if [ -n "$stray" ]; then
             echo "::error file=$patch::top-level entries a patch cannot declare:" >&2
             echo "$stray" >&2
