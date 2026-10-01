@@ -185,18 +185,24 @@ composed    : 184 top-level entries, 323 rows in total
 другой машине просто переустанавливается.
 
 ```powershell
-# 1. скопировать каталог (или распаковать архив) на целевую машину
-# 2. поставить — установщик сам определит ОС и подберёт способ запуска
-node install.mjs --target both
+# проще всего: одной командой на целевой машине, каталог копировать не нужно
+curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | sh
 ```
 
-Три сценария:
+Либо перенести каталог вручную и поставить из него:
+
+```powershell
+# 1. скопировать каталог (или распаковать архив) на целевую машину
+# 2. поставить — установщик сам определит ОС и подберёт способ запуска
+node install.mjs --target both --verify
+```
 
 | Куда | Что делать |
 |---|---|
+| Любая машина с доступом к релизам | `install.sh` (macOS/Linux) или `install.ps1` (Windows) — одной командой |
 | Другая машина, тот же `$DSH_HOME` | Скопировать каталог и выполнить `node install.mjs --target both` |
 | Другая машина, другой `$DSH_HOME` | То же; либо `node install.mjs --dsh-home D:\other --target both` |
-| **DSH Desktop** (macOS / Windows) | `node install.mjs --target preset --profile desktop`; на macOS перед этим — `xattr` и `chmod` (см. «Установка в DSH Desktop») |
+| **DSH Desktop** (macOS / Windows) | Скрипт сам выберет профиль `desktop`; вручную — `node install.mjs --target preset --profile desktop` |
 | macOS / Linux | То же — `install.mjs` определяет ОС через `process.platform` |
 
 **Сборка архива для передачи:**

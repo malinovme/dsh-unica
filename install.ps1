@@ -12,7 +12,7 @@
 # machines this script is for.
 #
 # Parameters:
-#   -Version v0.12.3.3   release tag to install (default: the latest here)
+#   -Version v0.12.3.3   release tag to install (default: the latest)
 #   -Profile web         DSH profile to patch (default: desktop if the Desktop
 #                        app has one, otherwise web)
 #   -DshHome C:\...\.dsh DSH home; normally taken from the environment
@@ -20,7 +20,7 @@
 #   -Target preset       preset | profile | both
 [CmdletBinding()]
 param(
-  [string]$Version = 'v0.12.3.3',
+  [string]$Version,
   [string]$Profile,
   [string]$DshHome,
   [string]$Target = 'preset',
@@ -43,6 +43,27 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 }
 if (-not (Get-Command tar -ErrorAction SilentlyContinue)) {
   Die 'tar is required to unpack the archive; Windows 10 1803 and newer ship it.'
+}
+
+# -- which release ----------------------------------------------------------
+# Asked for rather than hard-coded: a version written into this script goes
+# stale silently, and the failure would surface as a download error on a tag
+# that used to exist. A pinned -Version skips the lookup.
+if (-not $Version) {
+  if (Get-Command gh -ErrorAction SilentlyContinue) {
+    $Version = (& gh release view --repo $Repo --json tagName -q .tagName 2>$null | Select-Object -First 1)
+  }
+  if (-not $Version) {
+    # TLS 1.2 is not the default on every Windows PowerShell, and the lookup
+    # then fails with an error that says nothing about TLS.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    try {
+      $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ accept = 'application/vnd.github+json' } -UseBasicParsing
+      $Version = $release.tag_name
+    } catch {
+      Die "cannot determine the latest release of $Repo. Pass -Version <tag> (the repository is private, so an unauthenticated lookup cannot see its releases)."
+    }
+  }
 }
 
 # -- where things are -------------------------------------------------------

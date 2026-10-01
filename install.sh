@@ -9,7 +9,7 @@
 # keeps one implementation of the install logic, written once in Node.
 #
 # Environment overrides:
-#   UNICA_VERSION=v0.12.3.3     release tag to install (default: the latest here)
+#   UNICA_VERSION=v0.12.3.3     release tag to install (default: the latest)
 #   UNICA_PROFILE=web           DSH profile to patch (default: desktop if the
 #                               Desktop app has one, otherwise web)
 #   UNICA_DSH_HOME=~/.dsh       DSH home; normally taken from the environment
@@ -17,9 +17,6 @@
 #   UNICA_TARGET=preset         preset | profile | both
 set -eu
 
-# Bumped by the release that publishes the archives this script downloads. A
-# wrong tag fails loudly at the download, which is the right place to notice.
-VERSION="${UNICA_VERSION:-v0.12.3.3}"
 REPO="${UNICA_REPO:-malinovme/dsh-unica}"
 ASSET="dsh-plugin-unica-full.tar.gz"
 DSH_HOME="${UNICA_DSH_HOME:-${DSH_HOME:-$HOME/.dsh}}"
@@ -38,6 +35,27 @@ case "$(uname -s)" in
   Darwin|Linux) ;;
   *) die "this script handles macOS and Linux; on Windows use install.ps1" ;;
 esac
+
+# ── which release ───────────────────────────────────────────────────────────
+# The latest release is asked for rather than hard-coded: a version written into
+# this script goes stale silently, and the failure would surface as a download
+# error on a tag that used to exist. A pinned UNICA_VERSION skips the lookup,
+# which is also what makes this work offline against a mirror.
+if [ -n "${UNICA_VERSION:-}" ]; then
+  VERSION="$UNICA_VERSION"
+elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  VERSION="$(gh release view --repo "$REPO" --json tagName -q .tagName 2>/dev/null || true)"
+fi
+if [ -z "${VERSION:-}" ]; then
+  VERSION="$(node -e '
+const url = `https://api.github.com/repos/${process.argv[1]}/releases/latest`
+fetch(url, { headers: { accept: "application/vnd.github+json" } })
+  .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+  .then((j) => process.stdout.write(j.tag_name))
+  .catch(() => process.exit(1))
+' "$REPO" 2>/dev/null || true)"
+fi
+[ -n "${VERSION:-}" ] || die "cannot determine the latest release of $REPO. Pass UNICA_VERSION=<tag> (the repository is private, so an unauthenticated lookup cannot see its releases)."
 
 # ── which profile ───────────────────────────────────────────────────────────
 # DSH Desktop serves its sessions from a profile of its own, and patching `web`

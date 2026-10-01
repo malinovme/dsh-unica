@@ -80,21 +80,54 @@ stdio MCP-сервер с 74 инструментами для метаданн�
 
 ## Установка
 
+**Одной командой** — скачает релизный архив, сверит SHA-256, распакует плагин и
+сразу проверит, что MCP-сервер поднимается:
+
+```sh
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | sh
+```
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.ps1 | iex
+```
+
+Скрипт сам выбирает профиль (`desktop`, если он есть, иначе `web`), на macOS
+снимает карантин и ставит права на запуск, а если каталог кэша отказывает
+bootstrap — переносит кэш без вашего участия. Требуется только Node.js, который
+и так нужен DSH.
+
+**Из исходников** — если хотите править порт или у вас нет доступа к релизам:
+
 ```sh
 git clone https://github.com/malinovme/dsh-unica.git
 cd dsh-unica/dsh-unica-plugin
 node install.mjs --target both
 ```
 
+**Вручную из архива** — архив раскрывается без обёртки, его содержимое и есть
+каталог плагина:
+
+```sh
+tar -xzf dsh-plugin-unica-full.tar.gz && node install.mjs --verify
+```
+
 Установщик сам определит `$DSH_HOME` (`~/.dsh`), ОС и способ запуска, и
-пропишет абсолютные пути вашей машины. Затем **начните новую сессию DSH и
-выберите пресет «Unica 1C»**.
+пропишет абсолютные пути вашей машины. Флаг `--verify` поднимает MCP-сервер и
+печатает результат — `ok serverInfo unica 0.12.3, 74 tools`; без него установка
+проверяет только записанные файлы.
+
+Затем **перезапустите сервер DSH** и **начните новую сессию**, выбрав пресет
+**«Unica 1C»**.
 
 ### Варианты установки
 
 | Команда | Что делает |
 |---|---|
 | `node install.mjs` | только агент-пресет для Web GUI (по умолчанию) |
+| `node install.mjs --verify` | то же плюс проверка: поднимает MCP-сервер и печатает результат |
+| `node install.mjs --cache-dir D:\unica-cache` | перенести кэш рантайма, если каталог по умолчанию не пускает bootstrap |
 | `node install.mjs --target both` | ещё и патч профиля `headless` |
 | `node install.mjs --target preset --profile desktop` | установка в **DSH Desktop** (у него свой профиль `desktop`) |
 | `node install.mjs --profile tui` | патч для другого профиля |
@@ -105,9 +138,9 @@ node install.mjs --target both
 поэтому им нужен `--target preset` (у Desktop дополнительно `--profile desktop` —
 по умолчанию цель пишет в профиль `web`). Профили `headless`, `tui`, `sdk`, `acp`
 пресетами не пользуются — им достаточно `--target profile`. `--target both`
-закрывает оба случая. Порядок шагов для macOS — в
-[README плагина](dsh-unica-plugin/README.md#установка-в-dsh-desktop-macos--windows):
-там перед установкой нужны `xattr` и `chmod`.
+закрывает оба случая. Если ставите скриптом `install.sh`/`install.ps1`, всё это он
+выбирает сам; на macOS порядок шагов (карантин и права на запуск) — в
+[README плагина](dsh-unica-plugin/README.md#установка-в-dsh-desktop-macos--windows).
 
 ### Как выбрать пресет
 
