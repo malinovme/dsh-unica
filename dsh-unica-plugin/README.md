@@ -51,6 +51,31 @@ MCP-сервер**, чтобы проверка была не про файлы,
 `UNICA_DSH_HOME`, `UNICA_INSTALL_DIR`, `UNICA_VERIFY=0`) или параметрами
 PowerShell (`-Version`, `-Profile`, `-DshHome`, `-NoVerify`).
 
+### Какой профиль получит установку
+
+Развилка только одна, и её стоит знать: **если у вас стоят и DSH Desktop, и
+Web GUI, скрипт выберет `desktop`** — по наличию каталога `$DSH_HOME/profiles/desktop`.
+У кого Desktop нет, тот получит `web`, как раньше. `install.mjs`, запущенный
+руками, по умолчанию по-прежнему пишет в `web`.
+
+| Что у вас работает | Чем ставить |
+|---|---|
+| Только Web GUI | `curl … \| sh` без переменных |
+| Только DSH Desktop | `curl … \| sh` без переменных |
+| **Оба** | двумя вызовами: `UNICA_PROFILE=web` и `UNICA_PROFILE=desktop` |
+| Web GUI и headless/TUI | `node install.mjs --target both --verify` |
+
+```sh
+# оба приложения на одной машине
+UNICA_PROFILE=web     curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | sh
+UNICA_PROFILE=desktop curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | sh
+```
+
+Обе установки сосуществуют спокойно: пресет живёт в композиции своего профиля, а
+строки `mcp-unica` и `skill-filesystem-unica` для профилей без пресетов — в
+`headless`. Дублировать строки между `web` и `desktop` не нужно: сессии обоих
+приложений собираются из пресета, а не из самого профиля.
+
 **Вручную**, из распакованного архива — архив раскрывается **без обёртки**, то
 есть его содержимое и есть каталог плагина:
 

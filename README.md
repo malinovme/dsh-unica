@@ -98,6 +98,11 @@ irm https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.ps1 | iex
 bootstrap — переносит кэш без вашего участия. Требуется только Node.js, который
 и так нужен DSH.
 
+**Если у вас стоят и Desktop, и Web GUI** — скрипт выберет `desktop`; чтобы
+поставить в оба, вызовите его дважды с `UNICA_PROFILE=web` и
+`UNICA_PROFILE=desktop`. Разбор развилки — в
+[README плагина](dsh-unica-plugin/README.md#какой-профиль-получит-установку).
+
 **Из исходников** — если хотите править порт или у вас нет доступа к релизам:
 
 ```sh
