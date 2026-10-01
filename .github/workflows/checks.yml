@@ -22,6 +22,10 @@ jobs:
         with:
           node-version: '24'
 
+      - name: POSIX launcher uses LF line endings
+        run: |
+          node -e "if (require('node:fs').readFileSync('dsh-unica-plugin/bootstrap/launch.sh').includes(13)) throw new Error('POSIX launcher contains CRLF')"
+
       # 26 skills cite ../../references/...; this proves every citation resolves
       # to a file that is actually committed. Regenerating skills after an
       # upstream bump is exactly when this breaks.
