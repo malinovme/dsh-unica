@@ -2,11 +2,15 @@
 //
 //   node install.mjs [--dsh-home <path>] [--target preset|profile|both] [--dry-run]
 //                    [--profile <name>] [--platform win32|darwin|linux]
-//                    [--standard <composition.patch.yml>]
+//                    [--cache-dir <path>] [--standard <composition.patch.yml>]
 //
 // `--standard` builds the preset from a given composition instead of the shipped
 // `standard` one. It exists for CI, which has no DSH installed; a normal install
 // finds the real template by itself.
+//
+// `--cache-dir` puts the runtime cache and the provider state there instead of
+// `$DSH_HOME/unica`. On Windows it is the escape hatch for a `$DSH_HOME` whose
+// directory mask refuses the bootstrap's lock files; see the note on CACHE_DIR.
 //
 // Why an installer instead of a static tree: cordis patch files and preset
 // compositions support `!!js` expressions but have no plugin-root interpolation,
@@ -86,8 +90,21 @@ function launchPlan() {
 
 const LAUNCH = launchPlan()
 const SKILLS = join(PLUGIN_ROOT, 'skills')
-const RUNTIMES = join(DSH_HOME, 'unica', 'runtimes')
-const PROVIDER_STATE = join(DSH_HOME, 'unica', 'provider-state')
+
+/**
+ * Both writable directories the bootstrap owns.
+ *
+ * `--cache-dir` moves them together, and on Windows it is sometimes the only way
+ * to get a working MCP server. The bootstrap writes lock and transaction files
+ * next to the runtime, and a `$DSH_HOME` under the user profile can carry a
+ * directory mask that refuses it: the process then dies with
+ * `unica-bootstrap: Отказано в доступе. (os error 5)` about twenty milliseconds
+ * in, the MCP client reports `initial connection or tool synchronization
+ * failed`, and a preset that carries that row shows up as failed to load.
+ */
+const CACHE_DIR = arg('cache-dir', undefined)
+const RUNTIMES = CACHE_DIR === undefined ? join(DSH_HOME, 'unica', 'runtimes') : join(resolve(CACHE_DIR), 'runtimes')
+const PROVIDER_STATE = CACHE_DIR === undefined ? join(DSH_HOME, 'unica', 'provider-state') : join(resolve(CACHE_DIR), 'provider-state')
 
 const planned = []
 async function emit(path, content) {

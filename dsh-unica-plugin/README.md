@@ -357,6 +357,49 @@ node tools/verify-install.mjs "$DSH_HOME" web        # или headless
 выше ошибку с `insert:`: текстовые проверки её пропускают, потому что файл
 разбирается как YAML и выглядит правильным.
 
+### Если пресет помечен «Не удалось загрузить»
+
+Пресет зарегистрирован, но его композиция не смонтировалась — DSH показывает
+карточку с красной рамкой, а чип выбора такие пресеты скрывает (в коде Desktop
+это буквально `presets.filter((preset) => preset.broken === void 0)`), поэтому
+«в списке нет» и «карточка со сломанным» — это один и тот же симптом.
+
+Текст на карточке называет виновника дословно. Самый частый случай на Windows:
+
+```
+mcp-unica (@deepseek-ai/dsh-mcp-client):
+mcp-client(unica): initial connection or tool synchronization failed
+```
+
+Это не пресет и не состав — это MCP-сервер не поднялся, а
+`failOnStartupError: true` превращает его отказ в отказ всего пресета. Причина
+почти всегда в правах на каталог кэша: bootstrap пишет рядом с рантаймом файлы
+блокировок и транзакций, и если маска каталога их не пускает, он умирает через
+~20 мс с
+
+```
+unica-bootstrap: Отказано в доступе. (os error 5)
+```
+
+Проверить это можно без DSH — запустите bootstrap руками и посмотрите на код
+возврата:
+
+```powershell
+$env:UNICA_RUNTIME_CACHE_DIR = "$env:USERPROFILE\.dsh\unica\runtimes"
+.\bootstrap\bin\win-x64\unica-bootstrap.exe run --plugin-root (Get-Location)
+$LASTEXITCODE     # 0 — сервер поднялся; 1 — отказ, и он же причина «Failed to load»
+```
+
+Лечится переносом кэша в каталог, который такую запись пускает:
+
+```powershell
+node install.mjs --target preset --profile desktop --cache-dir D:\dsh-unica-cache
+```
+
+`--cache-dir` кладёт туда и рантайм (`runtimes`), и состояние провайдера
+(`provider-state`). Существующий рантайм можно просто скопировать в новый
+каталог — bootstrap сверит его по манифесту и не будет скачивать заново.
+
 ## Требования
 
 - **DSH 0.2.0 или новее.** В 0.1.x пресеты обнаруживались сканированием

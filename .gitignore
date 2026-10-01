@@ -13,3 +13,10 @@ build-report.json
 # Snapshots of this machine's live DSH profile patch, kept out of the source
 # tree: they carry absolute paths, exactly like build-report.json.
 .dsh/
+
+# The unica runtime cache when it is relocated here with `--cache-dir`. It is a
+# working copy of a ~300 MB third-party runtime, not source.
+.dsh-cache/
+
+# Scratch directories used while diagnosing the installer.
+.probe-*/

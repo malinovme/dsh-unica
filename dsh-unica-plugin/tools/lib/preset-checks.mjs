@@ -93,6 +93,19 @@ export function checkPreset(path, searchDirs = [], kind = 'patch') {
   for (const id of ['persona', 'mcp-unica', 'skill-filesystem-unica']) {
     if (!ids.includes(id)) throw new Error(`row missing from the preset: ${id}`)
   }
+  // The registry's own rule for a composition, mirrored here because it is the
+  // one that decides whether the mode appears at all: a row without a plugin
+  // name marks the whole preset "Failed to load", and a broken preset is hidden
+  // from the picker. A config-only row passes YAML and the schema and is still
+  // unselectable, so it is worth catching before DSH does.
+  for (const [index, row] of rows.entries()) {
+    if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+      throw new Error(`composition row ${index + 1} is not a plugin row (expected a map with a "name")`)
+    }
+    if (typeof row.name !== 'string' || row.name === '') {
+      throw new Error(`composition row ${index + 1} (id: ${row.id ?? 'none'}) names no plugin — DSH marks the whole preset "Failed to load" and hides it from the picker`)
+    }
+  }
   // A preset built by copying the shipped template must not nest the template's
   // own wrapper row — that silently produces a preset inside a preset.
   const dupes = ids.filter((id, i) => id !== undefined && ids.indexOf(id) !== i)
