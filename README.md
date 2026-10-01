@@ -83,14 +83,18 @@ node install.mjs --target both
 |---|---|
 | `node install.mjs` | только агент-пресет для Web GUI (по умолчанию) |
 | `node install.mjs --target both` | ещё и патч профиля `headless` |
+| `node install.mjs --target preset --profile desktop` | установка в **DSH Desktop** (у него свой профиль `desktop`) |
 | `node install.mjs --profile tui` | патч для другого профиля |
 | `node install.mjs --dsh-home D:\other` | нестандартный `$DSH_HOME` |
 | `node install.mjs --dry-run` | показать план, ничего не записывать |
 
-**Какой вариант нужен.** Web GUI собирает сессии из агент-пресета, поэтому для
-него нужен `--target preset`. Профили `headless`, `tui`, `sdk`, `acp` пресетами
-не пользуются — им достаточно `--target profile`. `--target both` закрывает оба
-случая.
+**Какой вариант нужен.** Web GUI и DSH Desktop собирают сессии из агент-пресета,
+поэтому им нужен `--target preset` (у Desktop дополнительно `--profile desktop` —
+по умолчанию цель пишет в профиль `web`). Профили `headless`, `tui`, `sdk`, `acp`
+пресетами не пользуются — им достаточно `--target profile`. `--target both`
+закрывает оба случая. Порядок шагов для macOS — в
+[README плагина](dsh-unica-plugin/README.md#установка-в-dsh-desktop-macos--windows):
+там перед установкой нужны `xattr` и `chmod`.
 
 ### Как выбрать пресет
 

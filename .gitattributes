@@ -1,0 +1,14 @@
+# Binary payloads: never let git normalise or diff them.
+#
+# Note what this file can and cannot do. It does NOT carry the executable bit —
+# git records modes from the filesystem, and the 100755 on `launch.sh` and on
+# `bin/darwin-arm64/unica-bootstrap` is already in the index, so a clone on macOS
+# or Linux gets them executable. On Windows git writes 100644 for every file and
+# nothing local notices, which is why the `posix-modes` CI job asserts the modes:
+# it is the guard against a Windows commit dropping them, not this file.
+dsh-unica-plugin/bootstrap/bin/darwin-arm64/unica-bootstrap binary
+dsh-unica-plugin/bootstrap/bin/linux-x64/unica-bootstrap binary
+dsh-unica-plugin/bootstrap/bin/win-x64/unica-bootstrap.exe binary
+
+# The launcher is a POSIX shell script and must keep LF endings.
+dsh-unica-plugin/bootstrap/launch.sh text eol=lf

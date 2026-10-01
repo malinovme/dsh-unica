@@ -49,6 +49,72 @@ node tools/verify-install.mjs "$env:USERPROFILE\.dsh" web
 
 **Требуется DSH 0.2.0 или новее** — в 0.1.x пресеты устроены иначе (см. ниже).
 
+## Установка в DSH Desktop (macOS / Windows)
+
+DSH Desktop поднимает **свой профиль**, а не `web`. Имя профиля — `desktop`, и он
+собирается из того же бандла `dsh-web-app`, то есть агент-плоскость в нём
+пресетная, как в Web GUI. Проверить имя на своей машине:
+
+```sh
+ls ~/.dsh/profiles          # macOS / Linux
+dir %USERPROFILE%\.dsh\profiles   # Windows
+```
+
+Дальше установка отличается только флагом `--profile`:
+
+```sh
+cd dsh-unica-plugin
+node install.mjs --target preset --profile desktop
+```
+
+`--profile desktop` здесь обязателен: по умолчанию цель `preset` пишет в профиль
+`web`, а `both` добавляет ещё и патч профиля `headless`. Для Desktop нужен
+именно `preset` — строки MCP и каталога навыков ставятся внутрь композиции
+пресета, а не в сам профиль.
+
+### macOS: два шага, без которых не заработает
+
+1. **Карантин.** Скачанный браузером архив помечается `com.apple.quarantine`, и
+   Gatekeeper не даст запустить `unica-bootstrap` — это неподписанный сторонний
+   бинарник. Снять метку с каталога плагина:
+
+   ```sh
+   xattr -dr com.apple.quarantine ~/Downloads/dsh-unica
+   ```
+
+   Если плагин получен через `git clone`, карантина нет и шаг не нужен.
+
+2. **Право на запуск.** В git для `bootstrap/launch.sh` и
+   `bootstrap/bin/darwin-arm64/unica-bootstrap` записан режим `100755`, поэтому
+   клон их получает исполняемыми. А вот распакованный архив — нет: он собран под
+   Windows, где такого режима не существует. Одна команда:
+
+   ```sh
+   chmod +x ~/Downloads/dsh-unica/dsh-unica-plugin/bootstrap/launch.sh \
+            ~/Downloads/dsh-unica/dsh-unica-plugin/bootstrap/bin/darwin-arm64/unica-bootstrap
+   ```
+
+### Проверка и запуск
+
+```sh
+node tools/verify-install.mjs "$HOME/.dsh" desktop
+```
+
+Затем **выйдите из DSH Desktop и запустите его снова** (реестр пресетов
+собирается при загрузке профиля) и начните **новую сессию** с пресетом
+**«Unica 1C»**.
+
+### Что ещё стоит знать про macOS
+
+- Нужен только `darwin-arm64`. Бинарников под Intel-маки апстрим не поставляет,
+  поэтому на Intel-ноутбуке порт не заведётся — установщик скажет об этом прямо.
+- `launch.sh` запускается через `sh`, поэтому способ запуска на macOS — `shell`,
+  а не прямой exec, как на Windows. Скрипт апстримный, порт его не менял.
+- Сеть нужна один раз: bootstrap скачивает ядро unica (~100 МБ) с GitHub при
+  первом запуске MCP-сервера и дальше работает офлайн.
+- Для реальной работы нужны права шире песочницы: правка исходников 1С вне
+  рабочего каталога и запись в кэш unica требуют `danger-full-access`.
+
 ## Перенос на другую машину
 
 Плагин переносится как обычный каталог. Абсолютные пути не хранятся в файлах
@@ -67,6 +133,7 @@ node install.mjs --target both
 |---|---|
 | Другая машина, тот же `$DSH_HOME` | Скопировать каталог и выполнить `node install.mjs --target both` |
 | Другая машина, другой `$DSH_HOME` | То же; либо `node install.mjs --dsh-home D:\other --target both` |
+| **DSH Desktop** (macOS / Windows) | `node install.mjs --target preset --profile desktop`; на macOS перед этим — `xattr` и `chmod` (см. «Установка в DSH Desktop») |
 | macOS / Linux | То же — `install.mjs` определяет ОС через `process.platform` |
 
 **Сборка архива для передачи:**
