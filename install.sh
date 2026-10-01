@@ -119,6 +119,14 @@ rm -rf "$INSTALL"
 mkdir -p "$INSTALL"
 tar -xzf "$WORK/$ASSET" -C "$INSTALL" || die "cannot unpack the archive."
 [ -f "$INSTALL/install.mjs" ] || die "the archive does not contain install.mjs — it is not the plugin archive."
+# Older releases were packaged on Windows with CRLF in the POSIX launcher.
+# Normalize only this text file, after verifying the original archive bytes.
+node -e '
+const fs = require("node:fs")
+const file = process.argv[1]
+const text = fs.readFileSync(file, "utf8")
+fs.writeFileSync(file, text.replace(/\r\n/g, "\n"))
+' "$INSTALL/bootstrap/launch.sh" || die "cannot normalize the POSIX launcher."
 say "  installed to: $INSTALL"
 
 # macOS quarantines anything a browser or curl wrote, and Gatekeeper then refuses

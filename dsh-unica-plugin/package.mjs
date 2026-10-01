@@ -26,6 +26,11 @@ const OUT = resolve(outArg === -1 ? join(PLUGIN_ROOT, '..', 'dsh-plugin-unica.ta
 const EXCLUDE_DIRS = new Set(['node_modules'])
 const BOOTSTRAP_REL = 'bootstrap/bin'
 
+// Windows-built releases must still contain a runnable POSIX launcher.
+if ((await readFile(join(PLUGIN_ROOT, 'bootstrap', 'launch.sh'))).includes(13)) {
+  throw new Error('bootstrap/launch.sh must use LF line endings — refusing to package')
+}
+
 async function* walk(dir, rel = '') {
   for (const e of await readdir(dir, { withFileTypes: true })) {
     const abs = join(dir, e.name)
