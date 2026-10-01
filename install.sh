@@ -2,6 +2,7 @@
 # Installs the DSH port of unica on macOS and Linux.
 #
 #   curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | sh
+#   gh api -H "Accept: application/vnd.github.raw+json" repos/malinovme/dsh-unica/contents/install.sh | sh
 #
 # This is a downloader, not the installer: it fetches the release archive,
 # checks it against the published SHA-256, unpacks it and hands over to
@@ -37,13 +38,17 @@ case "$(uname -s)" in
 esac
 
 # ── which release ───────────────────────────────────────────────────────────
+USE_GH=0
+if command -v gh >/dev/null 2>&1 && gh auth status --hostname github.com >/dev/null 2>&1; then
+  USE_GH=1
+fi
 # The latest release is asked for rather than hard-coded: a version written into
 # this script goes stale silently, and the failure would surface as a download
 # error on a tag that used to exist. A pinned UNICA_VERSION skips the lookup,
 # which is also what makes this work offline against a mirror.
 if [ -n "${UNICA_VERSION:-}" ]; then
   VERSION="$UNICA_VERSION"
-elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+elif [ "$USE_GH" = "1" ]; then
   VERSION="$(gh release view --repo "$REPO" --json tagName -q .tagName 2>/dev/null || true)"
 fi
 if [ -z "${VERSION:-}" ]; then
@@ -74,12 +79,14 @@ say "  profile : $PROFILE"
 say "  dsh home: $DSH_HOME"
 
 # ── download ────────────────────────────────────────────────────────────────
-if command -v curl >/dev/null 2>&1; then
+if [ "$USE_GH" = "1" ]; then
+  fetch() { gh release download "$VERSION" --repo "$REPO" --pattern "${1##*/}" --dir "$WORK"; }
+elif command -v curl >/dev/null 2>&1; then
   fetch() { curl -fsSL "$1" -o "$2"; }
 elif command -v wget >/dev/null 2>&1; then
   fetch() { wget -qO "$2" "$1"; }
 else
-  die "curl or wget is required to download the archive."
+  die "authenticated GitHub CLI (gh), curl or wget is required to download the archive."
 fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/unica-install.XXXXXX")"
