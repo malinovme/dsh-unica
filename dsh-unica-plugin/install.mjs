@@ -2,16 +2,30 @@
 //
 //   node install.mjs [--dsh-home <path>] [--target preset|profile|both] [--dry-run]
 //                    [--profile <name>] [--platform win32|darwin|linux]
-//                    [--standard <composition.cordis.yml>]
+//                    [--standard <composition.patch.yml>]
 //
 // `--standard` builds the preset from a given composition instead of the shipped
 // `standard` one. It exists for CI, which has no DSH installed; a normal install
 // finds the real template by itself.
 //
-// Why an installer instead of a static tree: cordis patch files and agent-preset
-// composition files support `!!js` expressions but have no plugin-root
-// interpolation, so the absolute location of this plugin must be baked in. Doing
-// it here keeps the source tree location-independent.
+// Why an installer instead of a static tree: cordis patch files and preset
+// compositions support `!!js` expressions but have no plugin-root interpolation,
+// so the absolute location of this plugin must be baked in. Doing it here keeps
+// the source tree location-independent.
+//
+// ── what changed for DSH 0.2.0 ──────────────────────────────────────────────
+// DSH 0.1.x discovered agent presets by SCANNING DIRECTORIES: the package
+// `@deepseek-ai/dsh-agent-presets` read `$DSH_HOME/.agent-presets/<id>/preset.yml`
+// plus `agent.cordis.yml` (`USER_PRESET_DIR` / `scanRoot`). DSH 0.2.0-rc.2
+// dropped that package entirely and replaced it with `@deepseek-ai/dsh-agent-preset`
+// + `dsh-agent-preset-registry`, which "neither scans directories nor accepts
+// preset paths": a preset is now one ordinary plugin ROW of the profile
+// composition, whose `config.plugins` holds the child entries inline.
+//
+// So both targets now write into the profile's `cordis.patch.yml`, and the
+// dropped `$DSH_HOME/.agent-presets/` directory must not be written at all — a
+// preset left there is invisible to 0.2.0, which is exactly the failure this
+// installer previously produced.
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, join, resolve, sep, delimiter } from 'node:path'
@@ -19,6 +33,9 @@ import { fileURLToPath } from 'node:url'
 
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)))
 const PRESET_ID = 'unica-1c'
+/** Plugin row id of the preset declaration inside the profile patch. */
+const PRESET_ROW_ID = `preset-${PRESET_ID}`
+const PRESET_ROW_NAME = '@deepseek-ai/dsh-agent-preset'
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(`--${name}`)
@@ -27,6 +44,12 @@ function arg(name, fallback) {
 const DRY_RUN = process.argv.includes('--dry-run')
 const DSH_HOME = resolve(arg('dsh-home', process.env.DSH_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.dsh')))
 const TARGET = arg('target', 'preset')
+// Each target defaults to the profile it belongs to; an explicit --profile wins
+// for both. Web is the only profile served by presets, and headless is where a
+// preset-free patch was historically installed.
+const PROFILE_ARG = arg('profile', undefined)
+const PRESET_PROFILE = PROFILE_ARG ?? 'web'
+const PATCH_PROFILE = PROFILE_ARG ?? 'headless'
 
 /**
  * Picks how the MCP server is launched on the target platform.
@@ -73,33 +96,63 @@ async function emit(path, content) {
   await writeFile(path, content, 'utf8')
 }
 
+/** Adds `indent` to every non-empty line; blank lines stay blank. */
+function indentBlock(text, indent) {
+  return text
+    .split('\n')
+    .map((line) => (line.trim() === '' ? '' : indent + line))
+    .join('\n')
+}
+
+/** Leading-space width of a line. */
+function indentWidth(line) {
+  return line.match(/^( *)/)[1].length
+}
+
 /**
- * Finds the installed harness so its shipped `standard` preset can be copied.
+ * Locates a TOP-LEVEL `- id:` entry.
  *
- * Deliberately subprocess-free: spawning `where.exe` is denied inside a
- * sandboxed DSH session (EPERM), which would make auto-detection fail exactly
- * where this installer is most likely to be run. PATH scanning needs no spawn.
+ * Deliberately not a regex: `^- id: x$` with the multiline flag also matches the
+ * indented child rows of an `- insert:` list, and acting on that match removed a
+ * sibling entry instead of the intended one.
+ *
+ * @returns `{ at, end }` line indices, or `undefined`
  */
-function installedHarnessRoots() {
-  const roots = []
-  const explicit = process.env.DSH_INSTALL_ROOT
-  if (explicit !== undefined && explicit !== '') roots.push(explicit)
-  // Windows environment variable names are case-insensitive; Node keeps the
-  // original spelling, so `process.env.PATH` may be undefined while `Path` is set.
-  const pathKey = Object.keys(process.env).find((k) => k.toLowerCase() === 'path')
-  const tail = `.bin${sep}`
-  for (const entry of (process.env[pathKey] ?? '').split(delimiter)) {
-    // A shim directory ends with `node_modules/.bin`, and npm does not always
-    // append a trailing separator, so match the tail with and without it.
-    const at = entry.endsWith(tail)
-      ? entry.length - tail.length
-      : entry.endsWith('.bin')
-        ? entry.length - '.bin'.length
-        : -1
-    const prefix = `node_modules${sep}`
-    if (at > 0 && entry.slice(0, at).endsWith(prefix)) roots.push(entry.slice(0, at - prefix.length))
+function findTopLevelEntry(lines, id) {
+  for (let i = 0; i < lines.length; i += 1) {
+    if (indentWidth(lines[i]) === 0 && lines[i] === `- id: ${id}`) {
+      return { at: i, end: findEntryEnd(lines, i) }
+    }
   }
-  return [...new Set(roots)]
+  return undefined
+}
+
+/**
+ * Last line index (exclusive) of the entry starting at `at`.
+ *
+ * The entry ends where the next line in column 1 begins; section comments inside
+ * it are indented in neither case, so they travel with the entry they precede.
+ */
+function findEntryEnd(lines, at) {
+  for (let i = at + 1; i < lines.length; i += 1) {
+    if (lines[i].trim() === '') continue
+    if (indentWidth(lines[i]) === 0 && !lines[i].startsWith('#')) return i
+  }
+  return lines.length
+}
+
+/**
+ * Removes the top-level entry with this id, keeping everything else intact.
+ *
+ * @returns the new file text, or `undefined` when the id has no top-level entry
+ */
+function removeTopLevelEntry(text, id) {
+  const lines = text.split('\n')
+  const found = findTopLevelEntry(lines, id)
+  if (found === undefined) return undefined
+  const head = lines.slice(0, found.at).join('\n').replace(/[ \t]*\n+$/, '')
+  const tail = lines.slice(found.end).join('\n').replace(/^\n+/, '')
+  return `${head}${tail === '' ? '' : `\n\n${tail.replace(/[ \t]*\n*$/, '')}`}\n`
 }
 
 /** The launch lines both targets share, at the given indentation. */
@@ -120,24 +173,39 @@ function envBlock(indent) {
   ].join('\n')
 }
 
-/** The standalone profile patch: correct for headless, TUI, SDK and ACP profiles. */
-function profilePatch() {
-  return `# Unica for DeepSeek Harness — generated by dsh-plugin-unica/install.mjs.
-# Plugin root : ${PLUGIN_ROOT}
-# Launch shape: ${LAUNCH.kind} (${LAUNCH.platform}/${LAUNCH.arch})
-- insert:
-    - id: mcp-unica
-      name: '@deepseek-ai/dsh-mcp-client'
-      config:
-        serverName: unica
-        transport: stdio
-${launchBlock('        ')}
-        env:
-${envBlock('          ')}
-        failOnStartupError: true
-        toolCallTimeoutMs: 600000
+/**
+ * The standalone profile patch: correct for headless, TUI, SDK and ACP profiles.
+ *
+ * Those profiles compose their agent plane straight from the host composition
+ * instead of mounting a preset, so the rows go into the profile patch itself.
+ */
+function profilePatchBody() {
+  return `- id: mcp-unica
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    serverName: unica
+    transport: stdio
+${launchBlock('    ')}
+    env:
+${envBlock('      ')}
+    failOnStartupError: true
+    toolCallTimeoutMs: 600000
+
+- id: skill-filesystem-unica
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    providerName: unica-plugin
+    includeDefaultRoots: false
+    customSkillDirs:
+      - '${SKILLS}'
+    watch: false
 `
 }
+
+const PROFILE_BANNER = `# Unica for DeepSeek Harness — profile patch, maintained by
+# dsh-plugin-unica/install.mjs. Entries are updated in place by id; anything
+# else in this file is left alone.
+`
 
 /**
  * Port rules that must hold for EVERY session, not only while a skill that
@@ -174,10 +242,12 @@ const PERSONA_SUFFIX = `suffix: >-
  * bundle disables the host-plane one — so a profile patch alone would give a Web
  * session the tools but no skills. A user preset is the only Web-side seam, and
  * presets have no "inherit and extend", so the standard composition is copied
- * and extended here (the same duplication the shipped `cordis` and `code`
+ * and extended here (the same duplication the shipped `cordis` and `ptc`
  * presets accept).
+ *
+ * @param standardYaml - the shipped template, as top-level rows at 2-space indent
  */
-function presetComposition(standardYaml) {
+function presetRow(standardYaml) {
   // Fail loud instead of shipping a preset whose standing rules were silently
   // dropped by an upstream edit to the template.
   if (!standardYaml.includes(PERSONA_ANCHOR)) {
@@ -217,56 +287,284 @@ ${envBlock('      ')}
       - '${SKILLS}'
     watch: false
 `
-  return `${withRules.trimEnd()}\n${mcpRow}`
+  const composition = `${withRules.trimEnd()}\n${mcpRow}`.replace(/\s*$/, '')
+
+  // The whole composition is nested as `config.plugins`, indented one level per
+  // YAML level: 4 under the `- insert:` payload, then 6 under `plugins:`. A
+  // plain re-indent is safe where re-serialising would not be — the persona
+  // rules live in a folded scalar whose meaning depends on its indentation.
+  return `- id: ${PRESET_ROW_ID}
+  name: '${PRESET_ROW_NAME}'
+  config:
+    id: ${PRESET_ID}
+    name: Unica 1C
+    description: >-
+      Разработка на 1С:Предприятии: метаданные, формы, роли, СКД и MXL,
+      внешние обработки и отчёты, сборка и обновление ИБ, поиск и диагностика
+      BSL-кода. Полный стандартный набор инструментов плюс MCP-сервер unica.
+    order: 50
+    plugins:
+${indentBlock(composition, '      ')}
+`
 }
 
-const presetMeta = () => `name: Unica 1C
-description: >-
-  Разработка на 1С:Предприятии: метаданные, формы, роли, СКД и MXL,
-  внешние обработки и отчёты, сборка и обновление ИБ, поиск и диагностика
-  BSL-кода. Полный стандартный набор инструментов плюс MCP-сервер unica.
-order: 50
-`
+/**
+ * Finds the installed harness so its shipped `standard` preset can be copied.
+ *
+ * Deliberately subprocess-free: spawning `where.exe` is denied inside a
+ * sandboxed DSH session (EPERM), which would make auto-detection fail exactly
+ * where this installer is most likely to be run. PATH scanning needs no spawn.
+ */
+function installedHarnessRoots() {
+  const roots = []
+  const explicit = process.env.DSH_INSTALL_ROOT
+  if (explicit !== undefined && explicit !== '') roots.push(explicit)
+  // Windows environment variable names are case-insensitive; Node keeps the
+  // original spelling, so `process.env.PATH` may be undefined while `Path` is set.
+  const pathKey = Object.keys(process.env).find((k) => k.toLowerCase() === 'path')
+  const tail = `.bin${sep}`
+  for (const entry of (process.env[pathKey] ?? '').split(delimiter)) {
+    // A shim directory ends with `node_modules/.bin`, and npm does not always
+    // append a trailing separator, so match the tail with and without it.
+    const at = entry.endsWith(tail)
+      ? entry.length - tail.length
+      : entry.endsWith('.bin')
+        ? entry.length - '.bin'.length
+        : -1
+    const prefix = `node_modules${sep}`
+    if (at > 0 && entry.slice(0, at).endsWith(prefix)) roots.push(entry.slice(0, at - prefix.length))
+  }
+  return [...new Set(roots)]
+}
+
+/**
+ * Locates the template the preset is copied from.
+ *
+ * 0.2.0 moved the shipped presets out of a scanned directory and into the web
+ * bundle, so the template is now a patch file rather than an `agent.cordis.yml`.
+ * `--standard` overrides the search: CI has no DSH installed, and this keeps the
+ * generator itself testable there.
+ */
+function standardTemplate() {
+  const explicit = arg('standard', undefined)
+  if (explicit !== undefined) {
+    const path = resolve(explicit)
+    if (!existsSync(path)) throw new Error(`--standard points at a file that does not exist: ${path}`)
+    return path
+  }
+  const rel = join('@deepseek-ai', 'dsh-web-app', 'presets', 'standard.patch.yml')
+  const candidates = [
+    join(PLUGIN_ROOT, 'node_modules', rel),
+    join(dirname(PLUGIN_ROOT), 'node_modules', rel),
+    ...installedHarnessRoots().map((root) => join(root, 'node_modules', rel)),
+  ]
+  const found = candidates.find((p) => existsSync(p))
+  if (found !== undefined) return found
+  throw new Error(
+    `cannot locate the shipped 'standard' preset composition. Looked at:\n  ${candidates.join('\n  ')}\n` +
+      `DSH 0.2.0 or newer is required: before it, presets were scanned from ` +
+      `$DSH_HOME/.agent-presets and this installer wrote files there instead.\n` +
+      `Pass DSH_INSTALL_ROOT=<the directory containing node_modules of your DSH install>, or --standard <path> to build from another composition.`,
+  )
+}
+
+/**
+ * Reads the shipped template as its payload rows.
+ *
+ * The template is a patch file (`- insert:` + one wrapping row whose
+ * `config.plugins` holds the composition), so the child entries have to be
+ * lifted out of that wrapper before they can be nested under this preset's own
+ * `config.plugins`. Copying the wrapper too would nest a whole preset row inside
+ * the composition.
+ */
+function templateRows(templateText) {
+  const lines = templateText.split('\n')
+  const from = lines.findIndex((line) => /^- insert:$/.test(line))
+  if (from === -1) throw new Error('the standard composition no longer starts with a top-level `- insert:` payload')
+  const payload = []
+  for (const line of lines.slice(from + 1)) {
+    if (line.trim() !== '' && !line.startsWith('  ')) break
+    payload.push(line)
+  }
+  // Flat scans cannot drift with the template's nesting: the wrapper row
+  // declares `config:` one level in and `plugins:` two, so child entries start
+  // at `firstRow + 6` and are normalised back to column 0 from there.
+  const idAt = payload.findIndex((line) => /^    - id: \S/.test(line))
+  if (idAt === -1) throw new Error('the standard composition carries no row inside its `- insert:` payload')
+  const firstRow = payload[idAt].match(/^(\s*)- id: /)[1].length
+  const pluginsAt = payload.findIndex((line, i) => i > idAt && line === ' '.repeat(firstRow + 4) + 'plugins:')
+  if (pluginsAt === -1) throw new Error('the standard composition has no `config.plugins` list to copy')
+  const rows = payload
+    .slice(pluginsAt + 1)
+    .map((line) => (line.startsWith(' '.repeat(firstRow + 6)) ? line.slice(firstRow + 6) : line))
+    .join('\n')
+    .replace(/^\n+/, '')
+    .replace(/\s*$/, '')
+  if (rows === '') throw new Error('the standard composition carries an empty `config.plugins` list')
+  return `${rows}\n`
+}
+
+/**
+ * Splits a generated block into its top-level `- id:` entries.
+ *
+ * A patch addresses entries by id, so every entry has to be applied on its own:
+ * upserting a block of two entries as one unit would append one of them twice.
+ */
+function splitEntries(block) {
+  const lines = block.trimEnd().split('\n')
+  const starts = []
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^- id: \S/.test(lines[i])) starts.push(i)
+  }
+  if (starts.length === 0) throw new Error('an entry block without a top-level `- id:` row cannot be applied by id')
+  return starts.map((start, n) => lines.slice(start, n + 1 < starts.length ? starts[n + 1] : lines.length).join('\n').replace(/\s*$/, ''))
+}
+
+/**
+ * Drops the child row `id` from every `- insert:` list that carries it.
+ *
+ * The installer writes top-level entries, so a row left inside an older
+ * install's `- insert:` list is not rewritten in place — it is taken out, and
+ * the entry is written at top level afterwards. Two tasks with one id is what
+ * DSH refuses to load, so leaving both is not an option.
+ *
+ * @returns `{ text, removed }`
+ */
+function removeInsertChild(text, id) {
+  const lines = text.split('\n')
+  const out = []
+  let removed = 0
+  for (let i = 0; i < lines.length; i += 1) {
+    if (indentWidth(lines[i]) !== 0 || lines[i] !== '- insert:') {
+      out.push(lines[i])
+      continue
+    }
+    const end = findEntryEnd(lines, i)
+    const payload = lines.slice(i + 1, end)
+    let width = 0
+    for (const line of payload) {
+      if (line.trim() !== '' && !line.startsWith('#')) {
+        width = indentWidth(line)
+        break
+      }
+    }
+    const child = `${' '.repeat(width)}- id: ${id}`
+    const kept = []
+    for (let j = 0; j < payload.length; j += 1) {
+      if (width > 0 && indentWidth(payload[j]) === width && payload[j] === child) {
+        // The row owns the comment block directly above it.
+        while (kept.length > 0 && kept[kept.length - 1].trimStart().startsWith('#')) kept.pop()
+        j += 1
+        while (j < payload.length && !(indentWidth(payload[j]) === width && payload[j].startsWith('- '))) j += 1
+        j -= 1
+        removed += 1
+        continue
+      }
+      kept.push(payload[j])
+    }
+    out.push(lines[i], ...kept)
+    i = end - 1
+  }
+  return { text: out.join('\n'), removed }
+}
+
+/**
+ * Drops `- insert:` entries that no longer hold any child.
+ *
+ * Taking a row out of a list can leave its empty parent behind, and an empty
+ * `insert:` is an entry DSH cannot make sense of.
+ *
+ * @returns `{ text, removed }`
+ */
+function removeEmptyInserts(text) {
+  const lines = text.split('\n')
+  const out = []
+  let removed = 0
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^- insert:\s*$/.test(lines[i])) {
+      let j = i + 1
+      while (j < lines.length && lines[j].trim() === '') j += 1
+      if (j >= lines.length || /^- /.test(lines[j])) {
+        removed += 1
+        // Swallow the blank separator this entry owned, so no double blank line
+        // is left where it stood.
+        while (i + 1 < lines.length && lines[i + 1].trim() === '') i += 1
+        continue
+      }
+    }
+    out.push(lines[i])
+  }
+  return { text: out.join('\n'), removed }
+}
+
+/**
+ * Normalises a profile patch before editing it.
+ *
+ * Every anchor in this file ends a line, and a Windows editor writes CRLF, so a
+ * `^`-to-`$` match would silently miss — which once produced a duplicate
+ * `mcp-unica` row instead of an error. The BOM some editors prepend is dropped
+ * for the same reason: it would sit in front of the first entry.
+ *
+ * @returns `{ text, eol }` where eol is restored on the way out
+ */
+function normalizePatch(text) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n'
+  return { text: text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n'), eol }
+}
+
+/**
+ * Applies one row to a profile patch, reporting exactly what happened.
+ *
+ * @returns a line for the install summary
+ */
+async function patchProfile(profile, banner, block, label) {
+  const path = join(DSH_HOME, 'profiles', profile, 'cordis.patch.yml')
+  const raw = existsSync(path) ? await readFile(path, 'utf8') : ''
+  const { text: existing, eol } = normalizePatch(raw)
+  const rows = splitEntries(block)
+  const ids = rows.map((row) => /^- id: (\S+)$/m.exec(row)[1])
+
+  let text = existing
+  const notes = []
+  for (const id of ids) {
+    const stripped = removeInsertChild(text, id)
+    if (stripped.removed > 0) {
+      text = stripped.text
+      notes.push(`${id}: rewritten from a nested \`- insert:\` child`)
+    }
+    const deduped = removeTopLevelEntry(text, id)
+    if (deduped !== undefined) {
+      text = deduped
+      notes.push(`${id}: replaced a top-level entry, which a patch cannot declare`)
+    }
+  }
+
+  const entry = `- insert:\n${indentBlock(rows.join('\n\n'), '    ')}`
+  text = `${text.replace(/[ \t]*\n*$/, '')}\n\n${entry}\n`
+  text = removeEmptyInserts(text).text
+  if (existing.trim() === '') text = `${banner}${text}`
+
+  await emit(path, eol === '\r\n' ? text.replace(/\n/g, '\r\n') : text)
+  const detail = notes.length === 0 ? '' : ` — ${notes.join('; ')}`
+  return `  ${label}: ${ids.join(', ')} in ${path}${detail}`
+}
 
 async function main() {
   const skillsCount = existsSync(SKILLS) ? (await readdir(SKILLS, { withFileTypes: true })).filter((e) => e.isDirectory()).length : 0
   if (skillsCount === 0) throw new Error(`no bundled skills found at ${SKILLS} — run build-skills.mjs first`)
   if (!existsSync(LAUNCH.exe)) throw new Error(`unica bootstrap for ${LAUNCH.platform}/${LAUNCH.arch} not found at ${LAUNCH.exe}`)
 
+  const summary = []
+
   if (TARGET === 'profile' || TARGET === 'both') {
-    const profile = arg('profile', 'headless')
-    await emit(join(DSH_HOME, 'profiles', profile, 'cordis.patch.yml'), profilePatch())
+    summary.push(await patchProfile(PATCH_PROFILE, PROFILE_BANNER, profilePatchBody(), 'profile rows'))
   }
 
   if (TARGET === 'preset' || TARGET === 'both') {
-    // The shipped `standard` composition is the template the preset is copied
-    // from. `--standard <path>` overrides the search: CI has no DSH installed,
-    // and this keeps the generator itself testable there.
-    const explicit = arg('standard', undefined)
-    let standardPath
-    if (explicit !== undefined) {
-      standardPath = resolve(explicit)
-      if (!existsSync(standardPath)) throw new Error(`--standard points at a file that does not exist: ${standardPath}`)
-    } else {
-      // Look beside this plugin first (monorepo / sibling install), then in the
-      // DSH installation the launcher actually runs from.
-      const rel = join('@deepseek-ai', 'dsh-agent-presets', 'presets', 'standard', 'agent.cordis.yml')
-      const candidates = [
-        join(PLUGIN_ROOT, 'node_modules', rel),
-        join(dirname(PLUGIN_ROOT), 'node_modules', rel),
-        ...installedHarnessRoots().map((root) => join(root, 'node_modules', rel)),
-      ]
-      standardPath = candidates.find((p) => existsSync(p))
-      if (standardPath === undefined) {
-        throw new Error(
-          `cannot locate the shipped 'standard' preset composition. Looked at:\n  ${candidates.join('\n  ')}\n` +
-            `Pass DSH_INSTALL_ROOT=<the directory containing node_modules of your DSH install>, or --standard <path> to build from another composition.`,
-        )
-      }
-    }
-    const presetDir = join(DSH_HOME, '.agent-presets', PRESET_ID)
-    await emit(join(presetDir, 'preset.yml'), presetMeta())
-    await emit(join(presetDir, 'agent.cordis.yml'), presetComposition(await readFile(standardPath, 'utf8')))
+    const template = standardTemplate()
+    const rows = templateRows(await readFile(template, 'utf8'))
+    summary.push(await patchProfile(PRESET_PROFILE, PROFILE_BANNER, presetRow(rows), 'agent preset'))
+    summary.push(`  preset template: ${template}`)
   }
 
   console.log(`${DRY_RUN ? '[dry-run] would install' : 'installed'} unica into ${DSH_HOME} (target: ${TARGET})`)
@@ -276,10 +574,16 @@ async function main() {
   console.log(`  skills        : ${skillsCount} directories at ${SKILLS}`)
   console.log(`  runtime cache : ${RUNTIMES}`)
   console.log(`  provider state: ${PROVIDER_STATE}`)
+  console.log('  profile patch:')
+  for (const line of summary) console.log(line)
   console.log('  files:')
   for (const p of planned) console.log(`    ${p}`)
   if (TARGET === 'preset' || TARGET === 'both') {
-    console.log(`\nStart a NEW DSH session and pick the "Unica 1C" preset.`)
+    console.log(
+      `\nDSH composes the preset roster when it loads the profile, so the row is live as soon as the\n` +
+        `DSH server restarts. Then start a NEW session on the preset "Unica 1C".\n` +
+        `Check the result without a GUI: node tools/verify-install.mjs "${DSH_HOME}" ${PRESET_PROFILE}`,
+    )
   }
 }
 

@@ -62,19 +62,39 @@ jobs:
           node tools/validate-workflow.mjs
           rm -rf node_modules
 
-      # CI has no DSH installed, so the shipped `standard` composition the preset
+      # The validator imports DSH's own `@deepseek-ai/dsh-agent-preset` and checks
+      # the declaration against its shipped schema, so it needs a harness. It is
+      # installed into an isolated prefix, never into the repository, and its
+      # location is passed explicitly rather than being guessed from PATH — the
+      # preset targets are exercised with the real thing, not with a stub parser.
+      - name: Install DSH into an isolated prefix
+        run: |
+          npm install --no-save --no-package-lock --prefix /tmp/dsh-ci @deepseek-ai/dsh@0.2.0-rc.2 >/dev/null
+          test -d /tmp/dsh-ci/node_modules/@deepseek-ai/dsh-agent-preset
+
+      # CI has no ambient DSH, so the shipped `standard` composition the preset
       # copies is absent. A stub template is created first and handed to every
       # installer call that builds a preset, which keeps the generator itself
-      # under test instead of skipping the check that depends on it.
+      # under test instead of skipping the check that depends on it. The stub has
+      # the 0.2.0 shape: a patch file whose `- insert:` row holds the composition
+      # in `config.plugins`.
       - name: Create a stub preset template
         run: |
           cat > /tmp/ci-standard.cordis.yml <<'YAML'
-          - id: persona
-            name: '@deepseek-ai/dsh-persona'
-            config:
-              suffix: Your working directory is {{cwd}}.
-          - id: skill-filesystem
-            name: '@deepseek-ai/dsh-skill-filesystem'
+          # Stub of the shipped `standard` preset template.
+          - insert:
+              - id: preset-standard
+                name: '@deepseek-ai/dsh-agent-preset'
+                config:
+                  id: standard
+                  order: 1
+                  plugins:
+                    - id: persona
+                      name: '@deepseek-ai/dsh-persona'
+                      config:
+                        suffix: Your working directory is {{cwd}}.
+                    - id: skill-filesystem
+                      name: '@deepseek-ai/dsh-skill-filesystem'
           YAML
 
       # Both rows of the plan on a real POSIX platform, which is the branch the
@@ -82,7 +102,7 @@ jobs:
       - name: Installer composes a plan (POSIX branch)
         working-directory: dsh-unica-plugin
         run: |
-          node install.mjs --dsh-home /tmp/dsh-ci --target both --dry-run \
+          node install.mjs --dsh-home /tmp/dsh-ci-home --target both --dry-run \
             --standard /tmp/ci-standard.cordis.yml
 
       - name: Installer builds a preset from the stub template
@@ -91,13 +111,24 @@ jobs:
           node install.mjs --dsh-home /tmp/dsh-ci-preset --target preset \
             --standard /tmp/ci-standard.cordis.yml
 
-      # Proves the generator appended its rows to the template instead of
-      # replacing it, and that it emitted the rows it promises.
-      - name: Generated preset keeps the template and adds both rows
+      # The preset is a plugin row of the profile patch now, and the retired
+      # scanned-directory layout must not come back: a preset left in
+      # `.agent-presets` is invisible to DSH 0.2.0, which is exactly how a
+      # working "Unica 1C" mode disappeared on a real machine.
+      - name: Generated patch is a preset row, not the retired layout
         run: |
-          preset=/tmp/dsh-ci-preset/.agent-presets/unica-1c/agent.cordis.yml
-          test -f "$preset"
+          patch=/tmp/dsh-ci-preset/profiles/web/cordis.patch.yml
+          test -f "$patch"
+          if [ -e /tmp/dsh-ci-preset/.agent-presets ]; then
+            echo "::error::the installer still writes the retired .agent-presets layout" >&2
+            exit 1
+          fi
           for needle in \
+            "- insert:" \
+            "id: preset-unica-1c" \
+            "name: '@deepseek-ai/dsh-agent-preset'" \
+            "id: unica-1c" \
+            "plugins:" \
             "id: persona" \
             "id: skill-filesystem" \
             "id: mcp-unica" \
@@ -105,22 +136,63 @@ jobs:
             "serverName: unica" \
             "UNICA_PROVIDER_STATE_DIR"
           do
-            if ! grep -q "$needle" "$preset"; then
-              echo "::error file=$preset::missing '$needle' in the generated preset"
+            if ! grep -q "$needle" "$patch"; then
+              echo "::error file=$patch::missing '$needle' in the generated patch"
               exit 1
             fi
           done
-          echo "generated preset carries the template plus both injected rows"
+          # Nothing but comments and the `insert:` keys themselves may sit in
+          # column 1. A top-level `- id:` entry is read as an override ADDRESS,
+          # not a declaration, so the row is silently dropped from the profile.
+          stray=$(grep -nE '^[^ #]' "$patch" | grep -v '^- insert:$' || true)
+          if [ -n "$stray" ]; then
+            echo "::error file=$patch::top-level entries a patch cannot declare:" >&2
+            echo "$stray" >&2
+            exit 1
+          fi
+          echo "every generated row is inserted"
+
+      # Idempotence matters as much as shape: re-running the installer must
+      # replace its own entries and leave every other entry of the patch alone.
+      - name: Re-running the installer keeps the patch stable
+        run: |
+          patch=/tmp/dsh-ci-preset/profiles/web/cordis.patch.yml
+          cp "$patch" /tmp/ci-patch-before.yml
+          ( cd dsh-unica-plugin && node install.mjs --dsh-home /tmp/dsh-ci-preset --target preset \
+              --standard /tmp/ci-standard.cordis.yml >/dev/null )
+          if ! diff -q /tmp/ci-patch-before.yml "$patch" >/dev/null; then
+            echo "::error file=$patch::a second install changed the file" >&2
+            diff -u /tmp/ci-patch-before.yml "$patch" || true
+            exit 1
+          fi
+          echo "a second install is a no-op"
 
       # The session rules injected into the persona suffix must survive as YAML,
       # not merely as text: a folded scalar that broke on indentation would parse
       # to the wrong thing and lose every rule without any error.
-      - name: Generated preset parses and keeps the session rules
+      - name: Generated patch parses and keeps the session rules
         working-directory: dsh-unica-plugin
-        run: |
-          npm install --no-save --no-package-lock js-yaml@4 >/dev/null
-          node tools/check-preset.mjs /tmp/dsh-ci-preset/.agent-presets/unica-1c/agent.cordis.yml
-          rm -rf node_modules
+        env:
+          DSH_INSTALL_ROOT: /tmp/dsh-ci
+        run: node tools/check-preset.mjs /tmp/dsh-ci-preset/profiles/web/cordis.patch.yml
+
+      # The gate the text assertions cannot be: compose the profile through DSH's
+      # own loader and prove the rows are IN the result. This is what catches a
+      # row that parses, typechecks and is still dropped by the patch layer.
+      - name: DSH composes the installed profile with the preset in it
+        working-directory: dsh-unica-plugin
+        env:
+          DSH_INSTALL_ROOT: /tmp/dsh-ci
+        run: node tools/verify-install.mjs /tmp/dsh-ci-preset web
+
+      # The strongest check available without a running DSH: the declaration is
+      # fed to the package that will consume it, and every row is resolved from
+      # the harness the way DSH resolves it.
+      - name: DSH schema-checks the generated preset
+        working-directory: dsh-unica-plugin
+        env:
+          DSH_INSTALL_ROOT: /tmp/dsh-ci
+        run: node tools/validate-preset.mjs /tmp/dsh-ci-preset/profiles/web/cordis.patch.yml
 
       - name: Installer rejects an unsupported platform
         working-directory: dsh-unica-plugin

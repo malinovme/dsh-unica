@@ -9,3 +9,7 @@ node_modules/
 # A bare name matches at any depth — `tools/build-report.json` would be
 # anchored to the repository root and miss dsh-unica-plugin/tools/.
 build-report.json
+
+# Snapshots of this machine's live DSH profile patch, kept out of the source
+# tree: they carry absolute paths, exactly like build-report.json.
+.dsh/
