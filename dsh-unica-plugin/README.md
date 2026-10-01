@@ -72,6 +72,14 @@ node install.mjs --target preset --profile desktop
 именно `preset` — строки MCP и каталога навыков ставятся внутрь композиции
 пресета, а не в сам профиль.
 
+**Никаких переменных окружения задавать не нужно.** Desktop держит харнесс не в
+`node_modules`, а внутри своего бандла — `<установка>/resources/app.asar`, где
+пакеты лежат в `dsh/node_modules/@deepseek-ai/`. Установщик и проверки читают
+шаблон пресета, `js-yaml` и схему объявления прямо оттуда, поэтому установка в
+Desktop работает так же, как в Web GUI. Если харнесс лежит нестандартно,
+`DSH_INSTALL_ROOT` принимает и каталог с `node_modules`, и путь к `app.asar`,
+и каталог `resources`.
+
 ### macOS: два шага, без которых не заработает
 
 1. **Карантин.** Скачанный браузером архив помечается `com.apple.quarantine`, и
@@ -100,6 +108,17 @@ node install.mjs --target preset --profile desktop
 node tools/verify-install.mjs "$HOME/.dsh" desktop
 ```
 
+Проверка собирает профиль **загрузчиком самого Desktop** — модули для этого
+копируются из его бандла во временный каталог, потому что обычный Node не умеет
+импортировать из `app.asar`. В выводе будет видно, какой харнесс использован:
+
+```
+harness     : (bundled in the Desktop app)
+desktop     : …\resources\app.asar
+composed    : 184 top-level entries, 323 rows in total
+  ok      `preset-unica-1c` is in the composed tree
+```
+
 Затем **выйдите из DSH Desktop и запустите его снова** (реестр пресетов
 собирается при загрузке профиля) и начните **новую сессию** с пресетом
 **«Unica 1C»**.
@@ -114,6 +133,14 @@ node tools/verify-install.mjs "$HOME/.dsh" desktop
   первом запуске MCP-сервера и дальше работает офлайн.
 - Для реальной работы нужны права шире песочницы: правка исходников 1С вне
   рабочего каталога и запись в кэш unica требуют `danger-full-access`.
+
+### Что ещё стоит знать про Windows
+
+- Ни карантина, ни `chmod` здесь нет: способ запуска — прямой вызов
+  `bootstrap\bin\win-x64\unica-bootstrap.exe`, без шелла и без Git.
+- Всё, что нужно, — команды установки выше и перезапуск приложения. Каталог
+  установки Desktop (`%LOCALAPPDATA%\Programs\DeepSeek Harness`) ищется
+  автоматически; если он нестандартный, укажите `DSH_INSTALL_ROOT`.
 
 ## Перенос на другую машину
 

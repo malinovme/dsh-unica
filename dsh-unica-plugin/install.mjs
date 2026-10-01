@@ -27,9 +27,10 @@
 // preset left there is invisible to 0.2.0, which is exactly the failure this
 // installer previously produced.
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
-import { dirname, join, resolve, sep, delimiter } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { harnessAsar, harnessRoots, readAsarFile } from './tools/lib/harness.mjs'
 
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)))
 const PRESET_ID = 'unica-1c'
@@ -309,62 +310,49 @@ ${indentBlock(composition, '      ')}
 }
 
 /**
- * Finds the installed harness so its shipped `standard` preset can be copied.
- *
- * Deliberately subprocess-free: spawning `where.exe` is denied inside a
- * sandboxed DSH session (EPERM), which would make auto-detection fail exactly
- * where this installer is most likely to be run. PATH scanning needs no spawn.
- */
-function installedHarnessRoots() {
-  const roots = []
-  const explicit = process.env.DSH_INSTALL_ROOT
-  if (explicit !== undefined && explicit !== '') roots.push(explicit)
-  // Windows environment variable names are case-insensitive; Node keeps the
-  // original spelling, so `process.env.PATH` may be undefined while `Path` is set.
-  const pathKey = Object.keys(process.env).find((k) => k.toLowerCase() === 'path')
-  const tail = `.bin${sep}`
-  for (const entry of (process.env[pathKey] ?? '').split(delimiter)) {
-    // A shim directory ends with `node_modules/.bin`, and npm does not always
-    // append a trailing separator, so match the tail with and without it.
-    const at = entry.endsWith(tail)
-      ? entry.length - tail.length
-      : entry.endsWith('.bin')
-        ? entry.length - '.bin'.length
-        : -1
-    const prefix = `node_modules${sep}`
-    if (at > 0 && entry.slice(0, at).endsWith(prefix)) roots.push(entry.slice(0, at - prefix.length))
-  }
-  return [...new Set(roots)]
-}
-
-/**
  * Locates the template the preset is copied from.
  *
  * 0.2.0 moved the shipped presets out of a scanned directory and into the web
  * bundle, so the template is now a patch file rather than an `agent.cordis.yml`.
  * `--standard` overrides the search: CI has no DSH installed, and this keeps the
  * generator itself testable there.
+ *
+ * @returns `{ path, text }` — `path` names where it came from for the report,
+ *   which for a bundled Desktop install is a path inside `app.asar`
  */
 function standardTemplate() {
   const explicit = arg('standard', undefined)
   if (explicit !== undefined) {
     const path = resolve(explicit)
     if (!existsSync(path)) throw new Error(`--standard points at a file that does not exist: ${path}`)
-    return path
+    return { path, text: readFileSync(path, 'utf8') }
   }
   const rel = join('@deepseek-ai', 'dsh-web-app', 'presets', 'standard.patch.yml')
   const candidates = [
     join(PLUGIN_ROOT, 'node_modules', rel),
     join(dirname(PLUGIN_ROOT), 'node_modules', rel),
-    ...installedHarnessRoots().map((root) => join(root, 'node_modules', rel)),
+    ...harnessRoots().map((root) => join(root, 'node_modules', rel)),
   ]
   const found = candidates.find((p) => existsSync(p))
-  if (found !== undefined) return found
+  if (found !== undefined) return { path: found, text: readFileSync(found, 'utf8') }
+
+  // DSH Desktop ships the harness inside app.asar rather than a node_modules on
+  // disk. Without this branch the template is "not found" on a machine where it
+  // is plainly present, which is exactly how Desktop installation failed.
+  const bundle = harnessAsar()
+  if (bundle !== undefined) {
+    const internal = `dsh/node_modules/${rel.split(sep).join('/')}`
+    const bytes = readAsarFile(internal, bundle)
+    if (bytes !== undefined) return { path: `${bundle.asar}\\${internal.replace(/\//g, '\\')}`, text: bytes.toString('utf8') }
+  }
+
   throw new Error(
     `cannot locate the shipped 'standard' preset composition. Looked at:\n  ${candidates.join('\n  ')}\n` +
       `DSH 0.2.0 or newer is required: before it, presets were scanned from ` +
       `$DSH_HOME/.agent-presets and this installer wrote files there instead.\n` +
-      `Pass DSH_INSTALL_ROOT=<the directory containing node_modules of your DSH install>, or --standard <path> to build from another composition.`,
+      `A bundled Desktop install was ${bundle === undefined ? 'not found either' : `found at ${bundle.asar}, but it carries no ${rel}`}.\n` +
+      `Pass DSH_INSTALL_ROOT=<the directory containing node_modules, or the app.asar, of your DSH install>, ` +
+      `or --standard <path> to build from another composition.`,
   )
 }
 
@@ -562,9 +550,8 @@ async function main() {
 
   if (TARGET === 'preset' || TARGET === 'both') {
     const template = standardTemplate()
-    const rows = templateRows(await readFile(template, 'utf8'))
-    summary.push(await patchProfile(PRESET_PROFILE, PROFILE_BANNER, presetRow(rows), 'agent preset'))
-    summary.push(`  preset template: ${template}`)
+    summary.push(await patchProfile(PRESET_PROFILE, PROFILE_BANNER, presetRow(templateRows(template.text)), 'agent preset'))
+    summary.push(`  preset template: ${template.path}`)
   }
 
   console.log(`${DRY_RUN ? '[dry-run] would install' : 'installed'} unica into ${DSH_HOME} (target: ${TARGET})`)

@@ -5,7 +5,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { harnessNodeModules, harnessRoots } from './lib/harness.mjs'
+import { harnessAsar, harnessNodeModules, harnessRoots } from './lib/harness.mjs'
 
 const PLUGIN = resolve(import.meta.dirname, '..')
 const TMP = process.env.TEMP ?? '/tmp'
@@ -49,8 +49,11 @@ const POSIX = PLATFORM !== 'win32'
 
 // The steps that have to reach the harness are handed its root explicitly: with
 // the stripped runner PATH built below they could not find it, and PATH scanning
-// is exactly what a sandboxed session denies.
-const harnessRoot = harnessRoots()[0]
+// is exactly what a sandboxed session denies. A Desktop-only machine has no
+// harness on PATH at all, so its bundle is passed instead — `DSH_INSTALL_ROOT`
+// accepts either shape and the tools understand both, which keeps this dry run
+// meaningful on a Desktop install as well as on a checkout.
+const harnessRoot = harnessRoots()[0] ?? harnessAsar()?.asar
 if (harnessRoot === undefined) throw new Error('cannot locate the DSH installation; set DSH_INSTALL_ROOT')
 
 for (const dir of [HOME_A, HOME_B]) rmSync(dir, { recursive: true, force: true })
@@ -139,9 +142,9 @@ if (existsSync(join(HOME_B, '.agent-presets'))) throw new Error('the installer s
 
 // The stripped runner PATH above hides the harness, which these need for
 // js-yaml, so they get the real environment plus an explicit search root. This
-// mirrors what the workflow does with its /tmp install.
-const harnessNM = harnessNodeModules()[0]
-if (harnessNM === undefined) throw new Error('cannot locate the harness to resolve js-yaml from; set DSH_INSTALL_ROOT')
+// mirrors what the workflow does with its /tmp install. On a Desktop-only
+// machine that root is the bundle, which the YAML resolver reads from directly.
+const harnessNM = harnessNodeModules()[0] ?? harnessAsar()?.asar
 
 // The gate the text assertions above cannot be: compose the profile through
 // DSH's own loader and prove the rows are IN the result. This is what caught the

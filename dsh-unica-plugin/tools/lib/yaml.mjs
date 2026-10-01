@@ -1,9 +1,15 @@
 // Resolves js-yaml, which is a dependency of the DSH installation rather than of
 // this plugin. Every tool that parses YAML needs it, and none of them should
 // depend on NODE_PATH being set by the caller.
+//
+// On a bundled Desktop install there is no node_modules on disk at all: js-yaml
+// sits inside the app's asar, so it is copied out of the bundle before being
+// required. That keeps every YAML-reading tool working on Desktop.
 import { createRequire } from 'node:module'
+import { existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { harnessNodeModules } from './harness.mjs'
+import { harnessAsar, harnessNodeModules, materializePackage } from './harness.mjs'
 
 const require = createRequire(import.meta.url)
 
@@ -29,6 +35,18 @@ export function loadYaml(extraDirs = []) {
       /* try the next root */
     }
   }
+
+  const bundle = harnessAsar()
+  if (bundle !== undefined) {
+    try {
+      const dir = join(tmpdir(), `dsh-yaml-${process.pid}`)
+      const pkg = materializePackage('js-yaml', dir, bundle)
+      return createRequire(join(pkg, 'package.json'))('js-yaml')
+    } catch (error) {
+      throw new Error(`js-yaml is neither on disk nor readable from the Desktop bundle (${bundle.asar}): ${error.message}`)
+    }
+  }
+
   throw new Error(
     `js-yaml not found. Install it (npm install js-yaml) or point NODE_PATH at a node_modules that has it. ` +
       `Looked in: ${['(ambient)', ...new Set(bases)].join(', ')}`,
