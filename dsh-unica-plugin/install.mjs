@@ -32,6 +32,7 @@
 // installer previously produced.
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { harnessAsar, harnessRoots, readAsarFile } from './tools/lib/harness.mjs'
@@ -47,6 +48,7 @@ function arg(name, fallback) {
   return i === -1 ? fallback : process.argv[i + 1]
 }
 const DRY_RUN = process.argv.includes('--dry-run')
+const VERIFY = process.argv.includes('--verify')
 const DSH_HOME = resolve(arg('dsh-home', process.env.DSH_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.dsh')))
 const TARGET = arg('target', 'preset')
 // Each target defaults to the profile it belongs to; an explicit --profile wins
@@ -102,9 +104,18 @@ const SKILLS = join(PLUGIN_ROOT, 'skills')
  * in, the MCP client reports `initial connection or tool synchronization
  * failed`, and a preset that carries that row shows up as failed to load.
  */
-const CACHE_DIR = arg('cache-dir', undefined)
-const RUNTIMES = CACHE_DIR === undefined ? join(DSH_HOME, 'unica', 'runtimes') : join(resolve(CACHE_DIR), 'runtimes')
-const PROVIDER_STATE = CACHE_DIR === undefined ? join(DSH_HOME, 'unica', 'provider-state') : join(resolve(CACHE_DIR), 'provider-state')
+const CACHE_ARG = arg('cache-dir', undefined)
+
+/** Where the bootstrap keeps its runtime and the provider state. */
+function cachePaths(cacheDir) {
+  const root = cacheDir === undefined ? DSH_HOME : resolve(cacheDir)
+  return cacheDir === undefined
+    ? { runtimes: join(root, 'unica', 'runtimes'), state: join(root, 'unica', 'provider-state') }
+    : { runtimes: join(root, 'runtimes'), state: join(root, 'provider-state') }
+}
+let CACHE = cachePaths(CACHE_ARG)
+let RUNTIMES = CACHE.runtimes
+let PROVIDER_STATE = CACHE.state
 
 const planned = []
 async function emit(path, content) {
@@ -112,6 +123,171 @@ async function emit(path, content) {
   if (DRY_RUN) return
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, content, 'utf8')
+}
+
+/** How long the MCP handshake is given when the runtime is already cached. */
+const SMOKE_TIMEOUT_MS = 120_000
+/** The budget for a cold cache, which must download and verify ~100 MB first. */
+const COLD_TIMEOUT_MS = 1_800_000
+const EXPECTED_TOOLS = 74
+
+/**
+ * The runtime's readiness marker.
+ *
+ * Its presence is what separates the two cases that need different budgets: a
+ * cached runtime answers in seconds, while a cold one spends minutes on the
+ * download and would look broken under the handshake's timeout.
+ */
+function readyMarker() {
+  const target = LAUNCH.platform === 'win32' ? 'win-x64' : LAUNCH.platform === 'darwin' ? 'darwin-arm64' : 'linux-x64'
+  return join(RUNTIMES, '0.12.3', target, '.ready.json')
+}
+
+/** Runs the bootstrap and gives up after `timeoutMs`, whatever it was doing. */
+function runBootstrap(timeoutMs, ask) {
+  return new Promise((resolve) => {
+    const child = spawn(LAUNCH.command, LAUNCH.args, {
+      env: { ...process.env, UNICA_RUNTIME_CACHE_DIR: RUNTIMES, UNICA_PROVIDER_STATE_DIR: PROVIDER_STATE },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    let exitCode
+    /** Complete JSON lines seen so far; a line can span several chunks. */
+    const lines = []
+    let pending = ''
+    const started = Date.now()
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      child.kill()
+      resolve({ code: exitCode, ...result, stderr, ms: Date.now() - started })
+    }
+    const timer = setTimeout(() => finish({ ok: false }), timeoutMs)
+    child.on('error', (error) => finish({ ok: false, stderr: String(error.message) }))
+    child.on('exit', (code) => {
+      exitCode = code
+      finish({ ok: false })
+    })
+    // A dead child turns these writes into EPIPE, and an unhandled `error` on a
+    // socket takes the whole installer down with it. The exit handler above has
+    // already recorded the failure, so the write error itself carries nothing.
+    child.stdin.on('error', () => {})
+    child.stdout.on('error', () => {})
+    const send = (message) => {
+      if (!child.stdin.destroyed && child.stdin.writable) child.stdin.write(`${JSON.stringify(message)}\n`)
+    }
+    // The server speaks only when spoken to: without this request it waits
+    // forever, and a probe that just listens would report a healthy server as
+    // dead after the full timeout.
+    send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'dsh-plugin-unica-installer', version: '1' } },
+    })
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString()
+      // One JSON line can span chunks — the tool catalogue is a single line of
+      // over a megabyte — so only complete lines are handed on, and the tail
+      // waits for the rest of itself.
+      const text = pending + chunk.toString()
+      const parts = text.split('\n')
+      pending = parts.pop() ?? ''
+      lines.push(...parts.filter((l) => l.trim() !== ''))
+      if (ask !== undefined) ask(child, lines, finish, send)
+    })
+  })
+}
+
+/**
+ * Starts the MCP server exactly as the profile will and speaks to it.
+ *
+ * This is the only check that answers the question a user actually has — "will
+ * the mode work?" — because everything before it only proves that files were
+ * written. A profile can be composed perfectly and still carry a row whose
+ * server never starts, and DSH then reports the whole preset as failed to load.
+ *
+ * A cold cache downloads the runtime inside this same run, so the budget follows
+ * the cache rather than the handshake.
+ *
+ * @returns `{ ok, tools, server, stderr, ms }` — `ok` is false with `stderr`
+ *   carrying the bootstrap's own message when the server never answered
+ */
+function smokeTest() {
+  const budget = existsSync(readyMarker()) ? SMOKE_TIMEOUT_MS : COLD_TIMEOUT_MS
+  if (budget === COLD_TIMEOUT_MS) {
+    console.log(`  runtime       : not cached yet — downloading and verifying it first, this can take minutes`)
+  }
+  // The output arrives in many chunks, and the tool catalogue is a single line of
+  // over a megabyte, so the reader works on complete lines collected by
+  // `runBootstrap`. Every step below runs at most once.
+  let asked = false
+  let counted = false
+  let serverInfo
+  return runBootstrap(budget, (_child, lines, finish, send) => {
+    const lineWith = (id) => lines.find((l) => l.includes(`"id":${id}`))
+    if (!asked) {
+      const initialized = lineWith(1)
+      if (initialized === undefined) return
+      asked = true
+      let server
+      try {
+        server = JSON.parse(initialized).result?.serverInfo
+      } catch {
+        /* answered, but not with a result: treated as not started */
+      }
+      send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+      send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })
+      serverInfo = server
+      return
+    }
+    if (counted) return
+    const listed = lineWith(2)
+    if (listed === undefined) return
+    counted = true
+    let tools
+    try {
+      tools = JSON.parse(listed).result?.tools?.length
+    } catch {
+      /* fall through with tools undefined */
+    }
+    finish({ ok: tools === EXPECTED_TOOLS, tools, server: serverInfo })
+  })
+}
+
+/**
+ * The refusal the cache directory can cause, and the only one this tool repairs.
+ *
+ * The bootstrap writes lock and transaction files next to the runtime. When the
+ * directory mask refuses that it exits within ~20 ms with
+ * `unica-bootstrap: Отказано в доступе. (os error 5)`, the MCP client reports
+ * `initial connection or tool synchronization failed`, and DSH shows the preset
+ * as failed to load — a symptom three steps away from its cause.
+ *
+ * Timing is the reliable signal, not the wording: a cold cache spends minutes
+ * downloading and says little, while a refusal is over before the process can
+ * print anything useful. Matching the message as well would tie this to the
+ * bootstrap's locale, and the same refusal arrives in a different language on a
+ * different machine.
+ */
+function isAccessRefusal(result) {
+  if (result.ok) return false
+  const message = result.stderr ?? ''
+  if (/Access is denied|Отказано в доступе|os error 5/i.test(message)) return true
+  return result.ms !== undefined && result.ms < 2_000 && result.code !== 0
+}
+
+/**
+ * Where to move the cache when the default location refuses the bootstrap.
+ *
+ * Beside the plugin: that directory is known to be writable, because the plugin
+ * itself was just unpacked there.
+ */
+function relocationTarget() {
+  return join(dirname(PLUGIN_ROOT), '.unica-cache')
 }
 
 /** Adds `indent` to every non-empty line; blank lines stay blank. */
@@ -554,21 +730,55 @@ async function patchProfile(profile, banner, block, label) {
   return `  ${label}: ${ids.join(', ')} in ${path}${detail}`
 }
 
+/**
+ * Writes everything the install owns and returns the report lines.
+ *
+ * Kept separate from `main` because `--verify` may have to run it a second time,
+ * with the cache somewhere else.
+ *
+ * @returns one line per patched profile, plus where the template came from
+ */
+async function applyProfile() {
+  const summary = []
+  if (TARGET === 'profile' || TARGET === 'both') {
+    summary.push(await patchProfile(PATCH_PROFILE, PROFILE_BANNER, profilePatchBody(), 'profile rows'))
+  }
+  if (TARGET === 'preset' || TARGET === 'both') {
+    const template = standardTemplate()
+    summary.push(await patchProfile(PRESET_PROFILE, PROFILE_BANNER, presetRow(templateRows(template.text)), 'agent preset'))
+    summary.push(`  preset template: ${template.path}`)
+  }
+  return summary
+}
+
 async function main() {
   const skillsCount = existsSync(SKILLS) ? (await readdir(SKILLS, { withFileTypes: true })).filter((e) => e.isDirectory()).length : 0
   if (skillsCount === 0) throw new Error(`no bundled skills found at ${SKILLS} — run build-skills.mjs first`)
   if (!existsSync(LAUNCH.exe)) throw new Error(`unica bootstrap for ${LAUNCH.platform}/${LAUNCH.arch} not found at ${LAUNCH.exe}`)
 
-  const summary = []
+  let summary = await applyProfile()
 
-  if (TARGET === 'profile' || TARGET === 'both') {
-    summary.push(await patchProfile(PATCH_PROFILE, PROFILE_BANNER, profilePatchBody(), 'profile rows'))
-  }
-
-  if (TARGET === 'preset' || TARGET === 'both') {
-    const template = standardTemplate()
-    summary.push(await patchProfile(PRESET_PROFILE, PROFILE_BANNER, presetRow(templateRows(template.text)), 'agent preset'))
-    summary.push(`  preset template: ${template.path}`)
+  // `--verify` is what turns "the files were written" into "the mode will work".
+  // Only the handshake proves the last one, and a refused cache directory is the
+  // one failure this tool can repair on its own: it is a property of where the
+  // cache sits, not of anything the user chose.
+  let verified
+  let relocated = false
+  if (VERIFY && !DRY_RUN) {
+    verified = await smokeTest()
+    // Only a refused cache is repaired, and the refusal is what tells us so: a
+    // download that merely ran long must not move the cache behind the user's
+    // back, or the runtime would be fetched twice.
+    if (!verified.ok && isAccessRefusal(verified)) {
+      const target = relocationTarget()
+      console.log(`\nthe bootstrap was refused at ${RUNTIMES} — moving the cache to ${target}`)
+      CACHE = cachePaths(target)
+      RUNTIMES = CACHE.runtimes
+      PROVIDER_STATE = CACHE.state
+      summary = await applyProfile()
+      verified = await smokeTest()
+      relocated = verified.ok
+    }
   }
 
   console.log(`${DRY_RUN ? '[dry-run] would install' : 'installed'} unica into ${DSH_HOME} (target: ${TARGET})`)
@@ -582,13 +792,46 @@ async function main() {
   for (const line of summary) console.log(line)
   console.log('  files:')
   for (const p of planned) console.log(`    ${p}`)
-  if (TARGET === 'preset' || TARGET === 'both') {
+
+  if (!VERIFY) {
     console.log(
       `\nDSH composes the preset roster when it loads the profile, so the row is live as soon as the\n` +
         `DSH server restarts. Then start a NEW session on the preset "Unica 1C".\n` +
-        `Check the result without a GUI: node tools/verify-install.mjs "${DSH_HOME}" ${PRESET_PROFILE}`,
+        `Pass --verify to start the MCP server here and prove the mode will work.`,
     )
+    return
   }
+
+  if (DRY_RUN) {
+    console.log('\n--verify was skipped: a dry run writes nothing to start the server for.')
+    return
+  }
+
+  console.log('  mcp check     :')
+  if (verified.ok) {
+    console.log(`    ok      serverInfo ${verified.server?.name ?? '?'} ${verified.server?.version ?? '?'}, ${verified.tools} tools in ${verified.ms} ms`)
+    if (relocated) {
+      console.log(
+        `    note    the default cache location refused the bootstrap, so this install uses ${dirname(RUNTIMES)}.\n` +
+          `            That is a directory-permission problem on this machine, not a problem with the port.`,
+      )
+    }
+    console.log(
+      `\nStart a NEW session on the preset "Unica 1C" — after restarting the DSH server, which composes\n` +
+        `the preset roster when it loads the profile.`,
+    )
+    return
+  }
+
+  console.log(`    FAIL    the MCP server did not answer within ${SMOKE_TIMEOUT_MS / 1000} s`)
+  if (verified.stderr.trim() !== '') console.log(`            bootstrap said: ${verified.stderr.trim().split('\n').at(-1)}`)
+  console.log(
+    `\nThe profile was still patched, and DSH will report the preset as failed to load until this is\n` +
+      `fixed — the picker hides such presets, so it would look like the install did nothing.\n` +
+      `If the cause is a cold cache, the first download simply needs longer: run again, and the runtime\n` +
+      `is kept. Otherwise check the cache directory: node tools/verify-install.mjs "${DSH_HOME}" ${PRESET_PROFILE}`,
+  )
+  process.exitCode = 1
 }
 
 await main()

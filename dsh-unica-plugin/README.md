@@ -29,12 +29,47 @@ MCP-клиента и установщик, который раскладыва�
 
 ## Установка
 
+**Одной командой** — скрипт скачает релизный архив, сверит SHA-256, распакует
+плагин в постоянный каталог и передаст управление установщику:
+
+```sh
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | sh
+```
+
 ```powershell
-cd dsh-unica-plugin
+# Windows
+irm https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.ps1 | iex
+```
+
+Скрипт сам выбирает профиль (`desktop`, если он есть, иначе `web`), снимает
+карантин на macOS, ставит права на запуск и после установки **поднимает
+MCP-сервер**, чтобы проверка была не про файлы, а про результат. Если каталог
+кэша отказывает bootstrap, он переезжает автоматически.
+
+Переопределяется переменными окружения (`UNICA_VERSION`, `UNICA_PROFILE`,
+`UNICA_DSH_HOME`, `UNICA_INSTALL_DIR`, `UNICA_VERIFY=0`) или параметрами
+PowerShell (`-Version`, `-Profile`, `-DshHome`, `-NoVerify`).
+
+**Вручную**, из распакованного архива — архив раскрывается **без обёртки**, то
+есть его содержимое и есть каталог плагина:
+
+```powershell
 node install.mjs                      # агент-пресет для Web GUI (по умолчанию)
 node install.mjs --target both        # ещё и патч профиля headless/TUI
+node install.mjs --verify             # плюс проверка MCP-сервера
 node install.mjs --dry-run            # показать план, ничего не писать
 node install.mjs --dsh-home D:\other-dsh
+```
+
+`--verify` стоит того: он единственный отвечает на вопрос «режим заработает?».
+Профиль может быть собран идеально и всё равно содержать строку, сервер которой
+не стартует, — DSH тогда помечает пресет сломанным. Если причина в каталоге
+кэша, `--verify` переносит кэш сам:
+
+```
+the bootstrap was refused at C:\Users\User\.dsh\unica\runtimes — moving the cache to C:\…\.unica-cache
+  mcp check     : ok      serverInfo unica 0.12.3, 74 tools in 1614 ms
 ```
 
 Затем **перезапустите сервер DSH** и **начните новую сессию**, выбрав пресет
