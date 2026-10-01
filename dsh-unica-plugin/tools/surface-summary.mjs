@@ -1,6 +1,7 @@
 // Summarises the port's surface for documentation: tool domains from the live
 // catalog and skill names grouped by prefix. Numbers here must match the shipped
 // artifacts, so they are computed rather than hand-written.
+import assert from 'node:assert/strict'
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -23,6 +24,9 @@ const skills = []
 for (const e of await readdir(join(ROOT, 'skills'), { withFileTypes: true })) {
   if (e.isDirectory()) skills.push(e.name.replace(/^unica-/, ''))
 }
+const metadata = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8')).unica
+assert.equal(catalog.length, metadata.mcpTools, 'package.json mcpTools differs from the catalog')
+assert.equal(skills.length, metadata.skills, 'package.json skills differs from the catalog')
 skills.sort()
 console.log(`\nSKILLS: ${skills.length}`)
 console.log(skills.join(', '))

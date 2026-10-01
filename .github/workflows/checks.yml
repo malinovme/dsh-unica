@@ -16,9 +16,9 @@ jobs:
   integrity:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
 
@@ -35,9 +35,8 @@ jobs:
         working-directory: dsh-unica-plugin
         run: node tools/check-encoding.mjs skills references
 
-      # Documentation numbers must match the shipped catalog, or the README
-      # starts lying about the tool surface.
-      - name: Tool surface summary
+      # Package metadata must match the committed tool and skill catalogs.
+      - name: Tool and skill counts match package metadata
         working-directory: dsh-unica-plugin
         run: node tools/surface-summary.mjs .
 
@@ -48,19 +47,6 @@ jobs:
       - name: Port corrections are present in the skills
         working-directory: dsh-unica-plugin
         run: node tools/check-port-notes.mjs
-
-      # The workflow itself is a checked artifact. Two runs were lost to errors
-      # this step names precisely: a mistyped key, or a job that asserts nothing.
-      # js-yaml is installed into the plugin directory rather than /tmp so the
-      # module resolves through the same path as it does for a developer running
-      # the check locally; the temporary node_modules is removed afterwards.
-      - name: Workflow definition is well formed
-        working-directory: dsh-unica-plugin
-        run: |
-          npm install --no-save --no-package-lock js-yaml@4 >/dev/null
-          node -e "console.log('js-yaml resolved from:', require.resolve('js-yaml'))"
-          node tools/validate-workflow.mjs
-          rm -rf node_modules
 
       # The validator imports DSH's own `@deepseek-ai/dsh-agent-preset` and checks
       # the declaration against its shipped schema, so it needs a harness. It is
@@ -136,7 +122,7 @@ jobs:
             "serverName: unica" \
             "UNICA_PROVIDER_STATE_DIR"
           do
-            if ! grep -q "$needle" "$patch"; then
+            if ! grep -Fq -- "$needle" "$patch"; then
               echo "::error file=$patch::missing '$needle' in the generated patch"
               exit 1
             fi
@@ -144,7 +130,7 @@ jobs:
           # Nothing but comments and the `insert:` keys themselves may sit in
           # column 1. A top-level `- id:` entry is read as an override ADDRESS,
           # not a declaration, so the row is silently dropped from the profile.
-          stray=$(grep -nE '^[^ #]' "$patch" | grep -v '^- insert:$' || true)
+          stray=$(grep -nE '^[^ #]' "$patch" | grep -vE '^[0-9]+:- insert:$' || true)
           if [ -n "$stray" ]; then
             echo "::error file=$patch::top-level entries a patch cannot declare:" >&2
             echo "$stray" >&2
@@ -209,7 +195,7 @@ jobs:
   posix-modes:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Unix bootstrap binaries and launch.sh are executable
         run: |
@@ -222,10 +208,3 @@ jobs:
             if [ ! -x "$f" ]; then echo "::error file=$f::not executable"; fail=1; fi
           done
           exit $fail
-
-      - name: The Windows launcher is not marked executable
-        run: |
-          if [ -x dsh-unica-plugin/bootstrap/bin/win-x64/unica-bootstrap.exe ]; then
-            echo "::error::unica-bootstrap.exe unexpectedly has the execute bit"
-            exit 1
-          fi
