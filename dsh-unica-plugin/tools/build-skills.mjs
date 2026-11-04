@@ -1,272 +1,138 @@
-// Builds the DSH port of the unica plugin from an installed upstream payload.
+// Rebuilds the port's skills and references from an upstream Unica checkout.
 //
-// Run from anywhere:  node tools/build-skills.mjs
+//   UNICA_UPSTREAM_PLUGIN=<path to plugins/unica> node tools/build-skills.mjs
 //
-// Source of truth:
-//   <codexHome>/plugins/cache/unica/unica/<version>  -> the real upstream package
-//   tools/tool-catalog.json                          -> the live `tools/list` result
+// The port does not fork Unica: the skill and reference corpus is a copy, and the
+// only transformation is the tool namespace. Unica names its tools with dots
+// (`unica.view`, `unica.apply`), and DSH publishes an MCP tool under
+// `mcp__<server>__<normalized name>`, appending a 12-hex SHA-256 of
+// `"<server>\0<raw name>"` whenever normalisation loses information — which the
+// dots always do. Skill text therefore has to carry the public name, or the model
+// reads an instruction it cannot follow.
 //
-// Overridable for a different upstream version or install layout:
-//   UNICA_UPSTREAM_VERSION, UNICA_UPSTREAM_PLUGIN
+// The mapping lives in `tool-map.json`, generated per upstream release from a live
+// `tools/list` (see `tools/fetch-tool-map.mjs`). Nothing here guesses a name.
 //
-// The only semantic rewrite is the tool-name namespace: unica skills address
-// tools as `unica.<domain>.<action>`, while DSH's MCP bridge exposes them as
-// `mcp__unica__unica_<domain>_<action>_<hash12>` (a dot is not legal in a
-// DeepSeek function name, and the lossy replacement appends an identity hash).
-// Everything else is copied byte-for-byte.
-import { createHash } from 'node:crypto'
+// Upstream 0.13 removed every skill this port used to patch: its four field
+// corrections described `role.edit`, `meta.add`, `code.patch` and `v8-runner`, and
+// none of those tools or that skill exists any more. They were dropped rather than
+// translated, because the new surface already answers much of what they warned
+// about — `apply` plans before it writes and returns an `executionToken` to commit
+// a saved plan. A replacement correction has to be found against 0.13 in the field
+// again; adding one here without that evidence would ship a guess as fact.
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const TOOLS_DIR = import.meta.dirname ?? dirname(fileURLToPath(import.meta.url))
 const OUT_ROOT = dirname(TOOLS_DIR)
-const CATALOG = join(TOOLS_DIR, 'tool-catalog.json')
-const UPSTREAM_VERSION = process.env.UNICA_UPSTREAM_VERSION ?? '0.12.3'
+const MAP_PATH = join(OUT_ROOT, 'tool-map.json')
+const SKILLS_OUT = join(OUT_ROOT, 'skills')
+const REFERENCES_OUT = join(OUT_ROOT, 'references')
 
 const SOURCE_PLUGIN =
   process.env.UNICA_UPSTREAM_PLUGIN ??
-  join(
-    process.env.USERPROFILE ?? process.env.HOME ?? '',
-    '.codex',
-    'plugins',
-    'cache',
-    'unica',
-    'unica',
-    UPSTREAM_VERSION,
+  join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.codex', 'plugins', 'cache', 'unica', 'unica', process.env.UNICA_UPSTREAM_VERSION ?? '0.13.0')
+
+if (!existsSync(join(SOURCE_PLUGIN, 'skills'))) {
+  throw new Error(
+    `no upstream plugin at ${SOURCE_PLUGIN}\n` +
+      `Set UNICA_UPSTREAM_PLUGIN to a checkout's plugins/unica directory, e.g.\n` +
+      `  UNICA_UPSTREAM_PLUGIN=/path/to/unica/plugins/unica node tools/build-skills.mjs`,
   )
-
-const SERVER_NAME = 'unica'
-const NAMESPACE = `mcp__${SERVER_NAME}__`
-
-/**
- * Port-level corrections applied on top of the upstream skill text.
- *
- * The port does not fork unica, and these are not stylistic edits: each one
- * records a behaviour found in the field where an upstream tool does not cover
- * the path its own documentation promises. They live here, next to the rename
- * step, so a future regeneration cannot silently drop them.
- *
- * Each patch must name the tool it is about, because the tool names are
- * rewritten AFTER these are inserted.
- */
-const PORT_NOTES = {
-  // Defect: a partial load builds a UTF-8-with-BOM file list holding Cyrillic
-  // relative paths; the platform refuses to read it. Upstream's own text in this
-  // skill says the automatic full retry fires only after exit code 4 with a
-  // structured result, so this failure class gets no retry.
-  'v8-runner': `## Правка порта: полная пересборка при неудаче частичной
-
-Сбой чтения файла-списка при частичной загрузке (платформа не читает
-\`build/temp/partial-lists/partial-list-*.txt\`: записан UTF-8 с BOM, пути
-относительные и с кириллицей вида \`Documents\\ЗаказПокупателя.xml\`) **не
-приводит к автоматическому полному повтору**. Автоматический повтор, описанный
-выше, вызывает только корректный структурированный результат после внешнего
-кода \`4\`; этот класс ошибки в него не попадает.
-
-Поэтому при такой ошибке не повторяй вызов с теми же аргументами, а сразу
-перезапусти ту же операцию с \`fullRebuild: true\`. Для единичных изменений это
-и дешевле: полная сборка одной цели обычно быстрее разбора частичной.`,
-
-  // Defect: the generated descriptor writes the singular form, while upstream's
-  // own specification and this skill use the plural vocabulary.
-  'register-design': `## Правка порта: вид регистра задаётся не инструментом
-
-\`unica.meta.add\` и \`unica.meta.edit\` **не принимают \`RegisterType\`** в
-\`setProperties\`. Генератор в этом случае пишет
-\`<RegisterType>Balance</RegisterType>\`, тогда как спецификация
-\`references/specs/1c-config-objects-spec.md\` называет значения \`Balances\` и
-\`Turnovers\`. Вид регистра выбирается выше по тексту, но задать его через MCP
-нельзя.
-
-Практическое следствие: после \`meta.add\` регистр накопления получает
-\`Balance\` независимо от замысла. Чтобы получить \`Turnovers\`, правь
-\`<RegisterType>\` в XML дескриптора напрямую и проверяй результат \`cf.validate\`
-или \`meta.info\`. Не выдавай \`Balance\` за выбранный вид — это дефолт
-генератора, а не решение.`,
-
-  // Defect: no tool covers updating an existing role.
-  'role-compile': `## Правка порта: обновление существующей роли инструментами не покрыто
-
-Два ограничения, оба проверены на живом проекте:
-
-- \`unica.role.edit\` **не принимает \`cwd\`** и уходит в домашний каталог,
-  завершаясь \`source_set_unknown\`;
-- \`unica.role.compile\` **всегда пропускает существующую роль** — даже с
-  \`Force: true\` отвечает \`[SKIP] Role ... already exists\`.
-
-Значит штатного способа дописать права в уже существующую роль у инструментов
-нет. Рабочий путь: прочитать текущее состояние (\`role.info\`, \`cf.info\`),
-затем править \`Rights.xml\` напрямую, не затирая существующие права, и
-завершать проверкой \`role.validate\`. Не вызывай \`role.compile\` по
-существующей роли в надежде на перезапись — вызов молча ничего не сделает.`,
-
-  // Defect: without cwd the core resolves the project from the home directory.
-  'code-patch': `## Правка порта: \`cwd\` обязателен
-
-Вызов без \`cwd\` ищет источник в домашнем каталоге и падает с
-\`SourceSetNotFound\`. Всегда передавай \`cwd\` рабочей области явно — правило
-относится к любому инструменту \`unica.*\`, а не только к этому.`,
 }
 
-/** Injects a port note right after the skill's `## MCP routing` section heading. */
-function applyPortNote(skillDir, text, stats) {
-  const note = PORT_NOTES[skillDir]
-  if (note === undefined) return text
-  const anchor = /^## MCP routing[ \t]*$/m
-  const match = anchor.exec(text)
-  // Fail loud rather than ship a skill whose correction silently vanished: an
-  // upstream edit that renames this heading is exactly when that would happen.
-  if (match === null) {
-    throw new Error(`port note for "${skillDir}" has no "## MCP routing" anchor to attach to`)
-  }
-  const at = match.index + match[0].length
-  stats.portNotes += 1
-  return `${text.slice(0, at)}\n\n${note}${text.slice(at)}`
+const toolMap = JSON.parse(await readFile(MAP_PATH, 'utf8'))
+// Longest first, so `unica.task.result` is replaced before a bare `unica.task`
+// prefix could swallow part of it.
+const TOOL_KEYS = Object.keys(toolMap).sort((a, b) => b.length - a.length)
+
+/** Rewrites every mapped tool name, and reports any that are left unmapped. */
+function rewrite(text) {
+  let out = text
+  for (const raw of TOOL_KEYS) out = out.split(raw).join(toolMap[raw])
+  // A name that still looks like a tool means the map is missing an entry, and
+  // shipping it would hand the model an instruction it cannot follow.
+  const leftovers = [...out.matchAll(/\bunica\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+/g)].map((m) => m[0])
+  return { out, leftovers }
 }
 
-async function main() {
-  if (!existsSync(SOURCE_PLUGIN)) throw new Error(`unica payload not found: ${SOURCE_PLUGIN}`)
-  const tools = JSON.parse(await readFile(CATALOG, 'utf8'))
+await rm(SKILLS_OUT, { recursive: true, force: true })
+await rm(REFERENCES_OUT, { recursive: true, force: true })
+await mkdir(SKILLS_OUT, { recursive: true })
 
-  // DSH's mcp-client naming contract, mirrored verbatim from
-  // @deepseek-ai/dsh-mcp-client `publicToolName()`:
-  //   joined = `mcp__<server>__<raw>`
-  //   normalized = joined with every char outside [A-Za-z0-9_-] replaced by '_'
-  //   if (normalized === joined && normalized.length <= 64) return normalized
-  //   else return normalized.slice(0, 51) + '_' + sha256(`${server}\0${raw}`).slice(0,12)
-  // Note the branch is taken when EITHER the replacement changed something OR
-  // the name overflows 64 chars. Every unica tool name contains dots, so every
-  // public name is the hashed `<normalized>_<hash12>` form — verified by
-  // reproducing the README's own example (`mcp__github__create_issue` needs no
-  // hash because it has no illegal character).
-  const publicName = (raw) => {
-    const joined = `${NAMESPACE}${raw}`
-    const normalized = joined.replace(/[^A-Za-z0-9_-]/g, '_')
-    if (normalized === joined && normalized.length <= 64) return normalized
-    const hash = createHash('sha256').update(`${SERVER_NAME}\0${raw}`).digest('hex').slice(0, 12)
-    return `${normalized.slice(0, 64 - 12 - 1)}_${hash}`
-  }
+const upstreamSkills = (await readdir(join(SOURCE_PLUGIN, 'skills'), { withFileTypes: true })).filter((e) => e.isDirectory())
+const unmappedSkills = new Map()
+const unmappedReferences = new Map()
+let rewritten = 0
 
-  const mapping = new Map(tools.map((t) => [t.name, publicName(t.name)]))
-  const escaped = [...mapping.keys()]
-    .sort((a, b) => b.length - a.length)
-    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  // Longest-first alternation, so `unica.runtime.job.list` never matches the
-  // `unica.runtime.job.list…` prefix of a longer name; the trailing boundary
-  // keeps `unica.cfe.patch_method` and `-x`/`.RU` suffixed prose from matching.
-  const pattern = new RegExp(`(?:${escaped.join('|')})(?![A-Za-z0-9_.-])`, 'g')
-
-  // Only the generated subtrees are cleared. The plugin root also holds the
-  // hand-written packaging (installer, patch, manifests) and one-off
-  // third-party payload (bootstrap binaries, licenses), so removing the root
-  // here would destroy files this script does not regenerate.
-  for (const generated of ['skills', 'references']) {
-    await rm(join(OUT_ROOT, generated), { recursive: true, force: true })
-  }
-  await mkdir(join(OUT_ROOT, 'skills'), { recursive: true })
-
-  // The skills cite their reference corpus as `../../references/...`. From an
-  // upstream skill file (<plugin>/skills/<skill>/SKILL.md) that resolves to
-  // <plugin-root>/references/. This port nests skills identically
-  // (<plugin>/skills/unica-<skill>/SKILL.md is still two levels below the
-  // plugin root), so the citations keep resolving correctly and must NOT be
-  // re-anchored. Only the corpus itself has to travel with the skills:
-  // omitting it silently degrades the 26 skills that read it.
-  const refSrc = join(SOURCE_PLUGIN, 'references')
-  const refDst = join(OUT_ROOT, 'references')
-  if (existsSync(refSrc)) await cp(refSrc, refDst, { recursive: true })
-  const refFiles = existsSync(refDst)
-    ? (await readdir(refDst, { recursive: true, withFileTypes: true })).filter((e) => e.isFile()).length
-    : 0
-
-  const srcSkills = join(SOURCE_PLUGIN, 'skills')
-  const skillDirs = (await readdir(srcSkills, { withFileTypes: true }))
-    .filter((e) => e.isDirectory())
-    .map((e) => e.name)
-    .sort()
-
-  const stats = {
-    skills: 0,
-    rewrittenFiles: 0,
-    replacements: 0,
-    portNotes: 0,
-    unknownToolRefs: new Set(),
-    extraFiles: 0,
-  }
-  const perSkill = []
-
-  for (const dir of skillDirs) {
-    const src = join(srcSkills, dir)
-    const dst = join(OUT_ROOT, 'skills', `unica-${dir}`)
-    await mkdir(dst, { recursive: true })
-
-    let hits = 0
-    const walk = async (from, to) => {
-      for (const entry of await readdir(from, { withFileTypes: true })) {
-        const s = join(from, entry.name)
-        const d = join(to, entry.name)
-        if (entry.isDirectory()) {
-          await mkdir(d, { recursive: true })
-          await walk(s, d)
-          continue
-        }
-        const buf = await readFile(s)
-        const isText = /\.(md|txt|json|ya?ml)$/i.test(entry.name)
-        if (!isText) {
-          await writeFile(d, buf)
-          continue
-        }
-        let text = buf.toString('utf8')
-        // Port corrections go in before the rename, so a note can name the tool
-        // the ordinary way and still come out rewritten consistently.
-        if (entry.name === 'SKILL.md') text = applyPortNote(dir, text, stats)
-        // Catch any tool reference the live catalog does not know about, so a
-        // stale skill is reported rather than silently left pointing nowhere.
-        for (const m of text.matchAll(/unica\.[a-z_]+(?:\.[a-z_]+)+/g)) {
-          if (!mapping.has(m[0])) stats.unknownToolRefs.add(m[0])
-        }
-        const rewritten = text.replace(pattern, (found) => {
-          hits += 1
-          return mapping.get(found)
-        })
-        if (rewritten !== text) {
-          stats.rewrittenFiles += 1
-          stats.replacements += hits
-        }
-        await writeFile(d, rewritten, 'utf8')
-        if (entry.name !== 'SKILL.md') stats.extraFiles += 1
-      }
+for (const entry of upstreamSkills) {
+  // The port prefixes the directory so its skills sit in one namespace, while the
+  // frontmatter `name` stays upstream's, which is what DSH shows.
+  const from = join(SOURCE_PLUGIN, 'skills', entry.name)
+  const target = join(SKILLS_OUT, `unica-${entry.name}`)
+  await mkdir(target, { recursive: true })
+  for (const file of await readdir(from, { withFileTypes: true, recursive: true })) {
+    if (file.isDirectory()) continue
+    const source = join(file.parentPath, file.name)
+    const rel = source.slice(from.length + 1)
+    const destination = join(target, rel)
+    await mkdir(dirname(destination), { recursive: true })
+    if (!rel.endsWith('.md')) {
+      await cp(source, destination)
+      continue
     }
-    await walk(src, dst)
-
-    // Drop Codex-only per-host artifacts: they declare a host this port is not.
-    const codexAgents = join(dst, 'agents')
-    if (existsSync(codexAgents)) await rm(codexAgents, { recursive: true, force: true })
-
-    stats.skills += 1
-    perSkill.push({ skill: `unica-${dir}`, toolRefs: hits })
+    const text = await readFile(source, 'utf8')
+    const { out, leftovers } = rewrite(text)
+    if (out !== text) rewritten += 1
+    for (const left of leftovers) unmappedSkills.set(left, (unmappedSkills.get(left) ?? 0) + 1)
+    await writeFile(destination, out, 'utf8')
   }
-
-  const report = {
-    sourcePlugin: SOURCE_PLUGIN,
-    outRoot: OUT_ROOT,
-    serverName: SERVER_NAME,
-    tools: tools.length,
-    skills: stats.skills,
-    referenceFiles: refFiles,
-    portNotes: stats.portNotes,
-    rewrittenFiles: stats.rewrittenFiles,
-    replacements: stats.replacements,
-    extraFiles: stats.extraFiles,
-    unknownToolRefs: [...stats.unknownToolRefs].sort(),
-    skillsWithoutToolRefs: perSkill.filter((s) => s.toolRefs === 0).map((s) => s.skill),
-    portNotesApplied: Object.keys(PORT_NOTES).map((s) => `unica-${s}`).sort(),
-  }
-  await writeFile(join(TOOLS_DIR, 'build-report.json'), `${JSON.stringify(report, null, 2)}\n`)
-  await writeFile(join(OUT_ROOT, 'tool-map.json'), `${JSON.stringify(Object.fromEntries(mapping), null, 2)}\n`)
-  console.log(JSON.stringify(report, null, 2))
 }
 
-await main()
+// The reference corpus is upstream documentation, not instructions: 0.13 still
+// names ten 0.12 tools in its form/DSL specs. Rewriting those would mean inventing
+// an equivalent for each and presenting the guess as upstream text, so they are
+// left alone and only reported.
+await cp(join(SOURCE_PLUGIN, 'references'), REFERENCES_OUT, { recursive: true })
+for (const file of await readdir(REFERENCES_OUT, { withFileTypes: true, recursive: true })) {
+  if (file.isDirectory() || !file.name.endsWith('.md')) continue
+  const path = join(file.parentPath, file.name)
+  const text = await readFile(path, 'utf8')
+  const { out, leftovers } = rewrite(text)
+  if (out !== text) await writeFile(path, out, 'utf8')
+  for (const left of leftovers) unmappedReferences.set(left, (unmappedReferences.get(left) ?? 0) + 1)
+}
+
+await writeFile(
+  join(OUT_ROOT, 'build-report.json'),
+  `${JSON.stringify(
+    {
+      upstream: SOURCE_PLUGIN,
+      skills: upstreamSkills.length,
+      filesRewritten: rewritten,
+      tools: Object.keys(toolMap).length,
+      unmappedInSkills: Object.fromEntries(unmappedSkills),
+      unmappedInReferences: Object.fromEntries(unmappedReferences),
+    },
+    null,
+    2,
+  )}\n`,
+  'utf8',
+)
+
+console.log(`skills     : ${upstreamSkills.length} directories`)
+console.log(`tools      : ${Object.keys(toolMap).length} mapped`)
+console.log(`rewritten  : ${rewritten} files carried a tool name`)
+if (unmappedReferences.size > 0) {
+  console.log(`references : ${unmappedReferences.size} upstream tool names left as written (documentation, not instructions)`)
+  for (const [name, count] of [...unmappedReferences].sort((a, b) => b[1] - a[1])) console.log(`  ${name} × ${count}`)
+}
+if (unmappedSkills.size > 0) {
+  console.error('\nUNMAPPED tool names in SKILLS — the model would read instructions it cannot follow:')
+  for (const [name, count] of [...unmappedSkills].sort((a, b) => b[1] - a[1])) console.error(`  ${name} × ${count}`)
+  process.exitCode = 1
+} else {
+  console.log('skills map : every tool name resolved')
+}

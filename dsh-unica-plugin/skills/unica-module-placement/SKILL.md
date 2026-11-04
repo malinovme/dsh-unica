@@ -7,18 +7,18 @@ description: "Размещение кода 1С по модулям. Испол�
 
 ## MCP routing
 
-- Preferred path: use MCP `unica` tools `mcp__unica__unica_project_map_7cc63b822c1d`, `mcp__unica__unica_meta_info_524a81764d16`, `mcp__unica__unica_meta_add_0bd12ddced5e`, `mcp__unica__unica_meta_edit_fbcdf19e5751`, `mcp__unica__unica_subsystem_info_57da9ac52ecc`, `mcp__unica__unica_code_search_70af4c0986a7`, `mcp__unica__unica_code_definition_3534a044b497`, `mcp__unica__unica_code_graph_c09c4e5a3a83`, `mcp__unica__unica_code_patch_539ea6e2f208`, `mcp__unica__unica_code_diagnostics_43785e27e86c`, and `mcp__unica__unica_runtime_execute_0cd62fbc3716`.
-- По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `mcp__unica__unica_runtime_execute_0cd62fbc3716` с `dryRun: true`
-показывает запланированную команду без побочных эффектов, а с `dryRun: false`
-исполняет классифицированную операцию и отвечает её терминальным результатом в
-том же вызове, приложив названную причину риска (`runtime_risk_*`)
-предупреждением; неклассифицированная операция по-прежнему отказывает
-`runtime_operation_unbounded` до обнаружения рабочего пространства. Preview
-исполнением не является. Работу, которую вызов ждать не должен, запускай через
-`mcp__unica__unica_runtime_job_start_64e0bb584ac4`. Не обходи контракт прямым runner-ом или через
-`unica.build.*`.
-- Use `mcp__unica__unica_standards_search_cab77e9c1bda` and `mcp__unica__unica_standards_explain_79d0ab30ea9c` for a development-standard about module hosting: 455, 469, 474, 486, 556, 679, 697, 724, 746, and diagnostics АПК:73, АПК:80, АПК:85, АПК:90, АПК:125, АПК:363, АПК:435-439, АПК:444, АПК:1245. These are standards, not evidence of runtime behavior; confirm the wording before citing one.
-- Use `mcp__unica__unica_role_info_7face3da6726` when the module enters privileged mode or carries the privileged flag.
+- Preferred path: use MCP `unica` tools `mcp__unica__unica_view_6f3a42290cc8 {}`, `mcp__unica__unica_view_6f3a42290cc8` on the object node, `mcp__unica__unica_apply_8ba7af26408e`, `mcp__unica__unica_view_6f3a42290cc8` on the subsystem node, `mcp__unica__unica_search_a8644a757dff`, `mcp__unica__unica_check_6db7d2a7495f`, and `mcp__unica__unica_run_189d01f64719`.
+- Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
+контракт каждой — `argsSchema`, `execution`, `previewRequired`,
+`dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
+при `implemented: true` используй опубликованную `argsSchema`; при
+`support.state: limited` разрешено только подмножество `support.supportedArgs`.
+При `support.state: unavailable` остановись; не выдумывай аргументов при
+`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
+затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
+вызовами. Не обходи контракт прямым runner-ом.
+- Use `mcp__unica__unica_docs_fd15d9ecf894` with `source: "development-standard"` for the standards about module hosting: 455, 469, 474, 486, 556, 679, 697, 724, 746, and diagnostics АПК:73, АПК:80, АПК:85, АПК:90, АПК:125, АПК:363, АПК:435-439, АПК:444, АПК:1245. These are standards, not evidence of runtime behavior; confirm the wording before citing one.
+- Use `mcp__unica__unica_view_6f3a42290cc8` on the role node when the module enters privileged mode or carries the privileged flag.
 - Do not call internal analyzer, runtime, standards, or package adapters directly. They are hidden behind MCP `unica`.
 
 ## Scope boundary
@@ -51,12 +51,12 @@ Then pick exactly one of the four common module contexts (std469) and name it by
 ## Workflow
 
 1. Answer the three std486 questions before opening any module. The answer, not convenience, picks the host.
-2. Map the neighbourhood with `mcp__unica__unica_project_map_7cc63b822c1d` and `mcp__unica__unica_subsystem_info_57da9ac52ecc`: an existing module for the same subsystem or purpose is a reason to extend rather than add.
-3. Check the callers with `mcp__unica__unica_code_graph_c09c4e5a3a83` before moving anything — a move that changes the module context changes what the callers may pass.
-4. When adding a common module, choose the context row first, then `mcp__unica__unica_meta_add_0bd12ddced5e` with the matching flags and postfix.
+2. Map the neighbourhood with `mcp__unica__unica_view_6f3a42290cc8 {}` and `mcp__unica__unica_view_6f3a42290cc8` on the subsystem node: an existing module for the same subsystem or purpose is a reason to extend rather than add.
+3. Find the callers with `mcp__unica__unica_search_a8644a757dff` by the method name before moving anything (a call graph is not on the v0.13 surface) — a move that changes the module context changes what the callers may pass.
+4. When adding a common module, choose the context row first, then `mcp__unica__unica_apply_8ba7af26408e` with the matching flags and postfix.
 5. Set `Вызов сервера` only for API genuinely called from the client, and state what it exposes.
-6. Apply code with `mcp__unica__unica_code_patch_539ea6e2f208`, one verifiable step at a time.
-7. Verify statically with `mcp__unica__unica_code_diagnostics_43785e27e86c`; use `mcp__unica__unica_runtime_execute_0cd62fbc3716` to preview typed syntax/test arguments and, with `dryRun: false`, to run them and report runtime behavior as unverified.
+6. Apply code with `mcp__unica__unica_apply_8ba7af26408e`, one verifiable step at a time.
+7. Verify statically with `mcp__unica__unica_check_6db7d2a7495f` on the module node (test runs are outside the v0.13 surface) and report runtime behavior as unverified.
 
 ## Design rules
 

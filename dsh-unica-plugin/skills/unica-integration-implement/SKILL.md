@@ -7,27 +7,27 @@ description: "Реализация интеграций 1С. Используй 
 
 ## MCP routing
 
-- Preferred path: use MCP `unica` tools `mcp__unica__unica_project_map_7cc63b822c1d`, `mcp__unica__unica_meta_info_524a81764d16`, `mcp__unica__unica_meta_add_0bd12ddced5e`, `mcp__unica__unica_meta_edit_fbcdf19e5751`, `mcp__unica__unica_code_search_70af4c0986a7`, `mcp__unica__unica_standards_search_cab77e9c1bda`, `mcp__unica__unica_standards_explain_79d0ab30ea9c`, and `mcp__unica__unica_runtime_execute_0cd62fbc3716`.
-- По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `mcp__unica__unica_runtime_execute_0cd62fbc3716` с `dryRun: true`
-показывает запланированную команду без побочных эффектов, а с `dryRun: false`
-исполняет классифицированную операцию и отвечает её терминальным результатом в
-том же вызове, приложив названную причину риска (`runtime_risk_*`)
-предупреждением; неклассифицированная операция по-прежнему отказывает
-`runtime_operation_unbounded` до обнаружения рабочего пространства. Preview
-исполнением не является. Работу, которую вызов ждать не должен, запускай через
-`mcp__unica__unica_runtime_job_start_64e0bb584ac4`. Не обходи контракт прямым runner-ом или через
-`unica.build.*`.
-- Use `unica.form.*`, `unica.role.*`, or `unica.cfe.*` tools when the integration requires UI, rights, or extension changes.
+- Preferred path: use MCP `unica` tools `mcp__unica__unica_view_6f3a42290cc8 {}`, `mcp__unica__unica_view_6f3a42290cc8` on the object node, `mcp__unica__unica_apply_8ba7af26408e`, `mcp__unica__unica_search_a8644a757dff`, `mcp__unica__unica_docs_fd15d9ecf894`, and `mcp__unica__unica_run_189d01f64719`.
+- Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
+контракт каждой — `argsSchema`, `execution`, `previewRequired`,
+`dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
+при `implemented: true` используй опубликованную `argsSchema`; при
+`support.state: limited` разрешено только подмножество `support.supportedArgs`.
+При `support.state: unavailable` остановись; не выдумывай аргументов при
+`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
+затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
+вызовами. Не обходи контракт прямым runner-ом.
+- Use `mcp__unica__unica_apply_8ba7af26408e` when the integration requires UI, rights, or extension changes: forms and roles are its operations, and what the dictionary does not write is a Unica MCP contract gap.
 - Do not call internal metadata, analyzer, standards, runtime, or package adapters directly. They are hidden behind MCP `unica`.
 
 ## Workflow
 
 1. Define the contract first: endpoint, method, auth, payload schema, idempotency key, retries, timeout, and error response shape.
-2. Inspect existing integration modules and HTTP/web service metadata with `mcp__unica__unica_code_search_70af4c0986a7` and `mcp__unica__unica_meta_info_524a81764d16`.
-3. Create or edit metadata through `mcp__unica__unica_meta_add_0bd12ddced5e` / `mcp__unica__unica_meta_edit_fbcdf19e5751`; keep source-set and format selected by `mcp__unica__unica_project_map_7cc63b822c1d`.
+2. Inspect existing integration modules and HTTP/web service metadata with `mcp__unica__unica_search_a8644a757dff` and `mcp__unica__unica_view_6f3a42290cc8` on the object node.
+3. Create or edit metadata through `mcp__unica__unica_apply_8ba7af26408e`; keep source-set and format selected by `mcp__unica__unica_view_6f3a42290cc8 {}`.
 4. Put reusable logic in common modules; keep HTTP service handlers thin and explicit about request parsing, validation, and response codes.
 5. Handle secrets outside versioned modules and configs. Do not log tokens, passwords, full request bodies with personal data, or raw auth headers.
-6. Use `mcp__unica__unica_runtime_execute_0cd62fbc3716` to preview typed syntax/test arguments and, with `dryRun: false`, to run them and report runtime verification as unavailable; for live HTTP behavior require a user-provided debug URL and external evidence, because `autonomous-server` cannot currently launch through this contract.
+6. Check syntax with `mcp__unica__unica_check_6db7d2a7495f` (test runs are outside the v0.13 surface) and report runtime verification as unavailable; for live HTTP behavior require a user-provided debug URL and external evidence, because no `mcp__unica__unica_run_189d01f64719` operation publishes a web-client URL.
 
 ## Contract detail
 
@@ -54,10 +54,9 @@ description: "Реализация интеграций 1С. Используй 
   "jsonrpc": "2.0",
   "method": "tools/call",
   "params": {
-    "name": "mcp__unica__unica_meta_info_524a81764d16",
+    "name": "mcp__unica__unica_view_6f3a42290cc8",
     "arguments": {
-      "sourceSet": "main",
-      "metadataPath": "HTTPService.ExternalAPI"
+      "at": "main:HTTPService.ExternalAPI"
     }
   }
 }

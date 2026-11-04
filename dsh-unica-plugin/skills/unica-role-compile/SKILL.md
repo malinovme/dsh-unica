@@ -13,53 +13,37 @@ allowed-tools:
 
 ## MCP routing
 
-## Правка порта: обновление существующей роли инструментами не покрыто
+- Preferred path: use MCP `unica` tool `mcp__unica__unica_apply_8ba7af26408e` с операциями
+  `role.create` и `right.set`.
+- Do not call internal MCP/CLI adapters directly. They are hidden behind
+  `unica` and synchronized by the orchestrator.
+- **Создание метит в корень конфигурации:** `args.at` — это
+  `<набор>:Configuration`, имя роли лежит в `values.name`. Адреса, которого
+  ещё нет, назвать нельзя. Дальнейшие права метят уже в саму роль.
+- Сначала вызови `mcp__unica__unica_apply_8ba7af26408e` с `at` и `ops`: это план без записи.
+  Когда пользователь поручил внести эту правку, вызови `mcp__unica__unica_apply_8ba7af26408e` только
+  с `executionToken` из `data.executionToken` успешного плана.
+- Роль и все её права публикуются одной транзакцией: либо роль появляется
+  настроенной, либо не появляется вовсе.
+- Каталогов выгрузки и путей к `Rights.xml` тут нет — их место занял адрес.
 
-Два ограничения, оба проверены на живом проекте:
+### Пресеты разворачивает скилл, а не инструмент
 
-- `mcp__unica__unica_role_edit_9929ddb32505` **не принимает `cwd`** и уходит в домашний каталог,
-  завершаясь `source_set_unknown`;
-- `mcp__unica__unica_role_compile_e48782f8dcad` **всегда пропускает существующую роль** — даже с
-  `Force: true` отвечает `[SKIP] Role ... already exists`.
+`right.set` принимает одно право: `values` с `object`, `right` и хотя бы одним
+из `value` и `rls`. Пресета `@view` инструмент не знает — разверни его сам по
+таблице ниже в набор операций. Так видно, какие именно права выданы, и
+предпросмотр показывает их поимённо, а не имя пресета.
 
-Значит штатного способа дописать права в уже существующую роль у инструментов
-нет. Рабочий путь: прочитать текущее состояние (`role.info`, `cf.info`),
-затем править `Rights.xml` напрямую, не затирая существующие права, и
-завершать проверкой `role.validate`. Не вызывай `role.compile` по
-существующей роли в надежде на перезапись — вызов молча ничего не сделает.
+Объект, ещё не перечисленный в роли, добавляется сам: заводить его отдельно не
+нужно.
 
-- Preferred path: use MCP `unica` tool `mcp__unica__unica_role_compile_e48782f8dcad`; `unica` owns XML/JSON DSL work and refreshes related workspace caches after mutations.
-- Do not call internal MCP/CLI adapters directly. They are hidden behind `unica` and synchronized by the orchestrator.
-- Execution path: call MCP `unica` tool `mcp__unica__unica_role_compile_e48782f8dcad`; skill-local operation scripts are not part of the workflow.
-- For mutating operations, pass `dryRun: false` only when the user explicitly requested the change; otherwise keep the default dry run.
-- Vendor support guard runs inside `unica`; if it blocks a locked/read-only supported object, prefer CFE/release-support or an explicit support-state change plan instead of editing raw support metadata.
+### Чего на канонической поверхности нет
 
-Принимает JSON-определение роли → генерирует `Roles/Имя.xml` (метаданные) и `Roles/Имя/Ext/Rights.xml` (права). UUID автоматически.
-
-## MCP параметры
-
-| Параметр | Описание |
-|----------|----------|
-| `JsonPath` | Путь к JSON-определению роли |
-| `OutputDir` | Корень выгрузки конфигурации (где `Configuration.xml`, `Roles/` и т.д.) |
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "mcp__unica__unica_role_compile_e48782f8dcad",
-    "arguments": {
-      "cwd": "<workspace>",
-      "JsonPath": "roles/read-products.json",
-      "OutputDir": "src",
-      "dryRun": false
-    }
-  }
-}
-```
-
-Создаёт `{OutputDir}/Roles/Имя.xml` и `{OutputDir}/Roles/Имя/Ext/Rights.xml`. Регистрирует `<Role>` в `Configuration.xml`.
+**Шаблоны RLS.** Операции, создающей `restrictionTemplate`, в реестре нет.
+`right.set` их сохраняет — существующие шаблоны при правке прав не страдают, —
+но объявить новый нечем. Условие ограничения пиши прямо в `values.rls`; если
+нужен именно переиспользуемый шаблон, скажи о пробеле контракта, а не
+подставляй ссылку на шаблон, которого не создашь.
 
 ## JSON DSL
 
@@ -136,6 +120,102 @@ allowed-tools:
 
 Подробные таблицы пресетов, русских синонимов и дополнительные примеры — в `dsl-reference.md`.
 
+## Порядок
+
+1. Имя набора: `mcp__unica__unica_view_6f3a42290cc8 {}`.
+2. Разверни пресеты в явные права по таблице выше.
+3. Предпросмотр: `mcp__unica__unica_apply_8ba7af26408e` с `at` и `ops`, `at` в корень конфигурации.
+4. Применение: вызов только с `executionToken` из `data.executionToken` успешного плана.
+5. Проверка: `mcp__unica__unica_check_6db7d2a7495f {at}` уже по адресу роли.
+
+## Примеры вызова
+
+### Роль с правами одним пакетом
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_apply_8ba7af26408e",
+    "arguments": {
+      "at": "main:Configuration",
+      "ops": [
+        {
+          "op": "role.create",
+          "args": {
+            "at": "main:Configuration",
+            "values": {"name": "ЧтениеНоменклатуры"}
+          }
+        },
+        {
+          "op": "right.set",
+          "args": {
+            "at": "main:Role.ЧтениеНоменклатуры",
+            "values": {"object": "Catalog.Номенклатура", "right": "Read", "value": true}
+          }
+        },
+        {
+          "op": "right.set",
+          "args": {
+            "at": "main:Role.ЧтениеНоменклатуры",
+            "values": {"object": "Catalog.Номенклатура", "right": "View", "value": true}
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+### Право с ограничением записей
+
+Условие пишется прямо в `values.rls`: шаблон объявить нечем.
+
+Сначала получи план этого изменения:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_apply_8ba7af26408e",
+    "arguments": {
+      "at": "main:Role.ЧтениеПоОрганизации",
+      "ops": [
+        {
+          "op": "right.set",
+          "args": {
+            "at": "main:Role.ЧтениеПоОрганизации",
+            "values": {
+              "object": "Document.РеализацияТоваровУслуг",
+              "right": "Read",
+              "value": true,
+              "rls": "ГДЕ Организация = &ТекущаяОрганизация"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Для исполнения передай `data.executionToken` из этого успешного плана:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_apply_8ba7af26408e",
+    "arguments": {
+      "executionToken": "<data.executionToken из успешного плана>"
+    }
+  }
+}
+```
+
 ## Верификация
 
 ### Проверка корректности XML, прав и RLS
@@ -145,10 +225,9 @@ allowed-tools:
   "jsonrpc": "2.0",
   "method": "tools/call",
   "params": {
-    "name": "mcp__unica__unica_role_validate_b7f8a919bffe",
+    "name": "mcp__unica__unica_check_6db7d2a7495f",
     "arguments": {
-      "cwd": "<workspace>",
-      "RightsPath": "<RightsPath>"
+      "at": "<набор>:Role.<ИмяРоли>"
     }
   }
 }
@@ -161,10 +240,9 @@ allowed-tools:
   "jsonrpc": "2.0",
   "method": "tools/call",
   "params": {
-    "name": "mcp__unica__unica_role_info_7face3da6726",
+    "name": "mcp__unica__unica_view_6f3a42290cc8",
     "arguments": {
-      "cwd": "<workspace>",
-      "RightsPath": "<RightsPath>"
+      "at": "<набор>:Role.<ИмяРоли>"
     }
   }
 }

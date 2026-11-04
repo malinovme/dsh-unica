@@ -41,13 +41,14 @@ jobs:
         working-directory: dsh-unica-plugin
         run: node tools/surface-summary.mjs .
 
-      # The port's own corrections to upstream skill text live in a table inside
-      # the generator. Losing one would be silent, so each is verified in the
-      # output: present exactly once, after the routing section, and carrying
-      # already-namespaced tool names.
-      - name: Port corrections are present in the skills
+      # Every tool name a skill mentions has to resolve through the map. 0.13
+      # renamed the whole surface (74 domain actions became eleven tools), and a
+      # stale name would have the model call something DSH does not expose. This
+      # replaces the 0.12 check for the four port corrections: those patched
+      # skills that no longer exist.
+      - name: Every tool name in the skills resolves
         working-directory: dsh-unica-plugin
-        run: node tools/check-port-notes.mjs
+        run: node tools/check-tool-names.mjs
 
       # The workflow itself is a checked artifact. Two runs were lost to errors
       # this step names precisely: a mistyped key, or a job that asserts nothing.
@@ -202,30 +203,29 @@ jobs:
             exit 1
           fi
 
-  # File modes are only real on a POSIX checkout. Windows git records every file
-  # as 100644, so a contributor on Windows can silently drop the execute bit and
-  # nothing local would notice; upstream launch.sh execs the bootstrap directly,
-  # which needs it.
+  # The port now carries no prebuilt binaries: the Node launcher fetches the
+  # runtime, so the old execute-bit checks for bootstrap/bin have nothing to
+  # inspect. What still matters is that the POSIX install path stays usable — the
+  # wrapper must be executable and must not arrive with CRLF, which `sh` reads as
+  # a command name ending in a carriage return.
   posix-modes:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Unix bootstrap binaries and launch.sh are executable
+      - name: install.sh is executable and LF-only
         run: |
           fail=0
-          for f in \
-            dsh-unica-plugin/bootstrap/launch.sh \
-            dsh-unica-plugin/bootstrap/bin/darwin-arm64/unica-bootstrap \
-            dsh-unica-plugin/bootstrap/bin/linux-x64/unica-bootstrap
-          do
-            if [ ! -x "$f" ]; then echo "::error file=$f::not executable"; fail=1; fi
-          done
+          f=install.sh
+          [ -x "$f" ] || { echo "::error file=$f::not executable"; fail=1; }
+          if grep -q $'\r' "$f"; then echo "::error file=$f::contains CRLF"; fail=1; fi
           exit $fail
 
-      - name: The Windows launcher is not marked executable
+      - name: The Node launcher carries no execute bit and no CRLF
         run: |
-          if [ -x dsh-unica-plugin/bootstrap/bin/win-x64/unica-bootstrap.exe ]; then
-            echo "::error::unica-bootstrap.exe unexpectedly has the execute bit"
+          f=dsh-unica-plugin/bootstrap/launch.mjs
+          if [ -x "$f" ]; then
+            echo "::error file=$f::unexpectedly executable; it is invoked through node"
             exit 1
           fi
+          if grep -q $'\r' "$f"; then echo "::error file=$f::contains CRLF"; exit 1; fi

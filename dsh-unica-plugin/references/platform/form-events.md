@@ -13,7 +13,7 @@ parameterized forms, and diagnostics `АПК:100`, `АПК:104`, `АПК:526`, `
 `BSLLS:CompilationDirectiveNeedLess`, `BSLLS:SeveralCompilerDirectives`,
 `BSLLS:ServerSideExportFormMethod`, `v8cs:form-module-missing-pragma`,
 `v8cs:invocation-form-event-handler`, `v8cs:unknown-form-parameter-access`.
-Confirm the current wording with `unica.standards.explain` before citing one.
+Confirm the current wording with `mcp__unica__unica_docs_fd15d9ecf894` with `source: "development-standard"` before citing one.
 
 ## The Two Sides Of A Form Module
 

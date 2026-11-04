@@ -1,11 +1,9 @@
 ---
 name: subsystem-edit
 description: Точечное редактирование подсистемы 1С. Используй когда нужно добавить или удалить объекты из подсистемы, управлять дочерними подсистемами или изменить свойства
-argument-hint: -SubsystemPath <path> -Operation <op> -Value <value>
+argument-hint: <at> <ops>
 allowed-tools:
-  - Bash
   - Read
-  - Write
   - Glob
 ---
 
@@ -13,143 +11,138 @@ allowed-tools:
 
 ## MCP routing
 
-- Preferred path: use MCP `unica` tool `mcp__unica__unica_subsystem_edit_79ebeecde977`; `unica` owns XML/JSON DSL work and refreshes related workspace caches after mutations.
-- Do not call internal MCP/CLI adapters directly. They are hidden behind `unica` and synchronized by the orchestrator.
-- Execution path: call MCP `unica` tool `mcp__unica__unica_subsystem_edit_79ebeecde977`; skill-local operation scripts are not part of the workflow.
-- For mutating operations, pass `dryRun: false` only when the user explicitly requested the change; otherwise keep the default dry run.
-- Vendor support guard runs inside `unica`; if it blocks a locked/read-only supported object, prefer CFE/release-support or an explicit support-state change plan instead of editing raw support metadata.
-
-Точечное редактирование XML подсистемы: состав, дочерние подсистемы, свойства.
-
-## MCP параметры
-
-| Параметр | Описание |
-|----------|----------|
-| `SubsystemPath` | Путь к XML-файлу подсистемы |
-| `DefinitionFile` | JSON-файл с массивом операций |
-| `Operation` | Одна операция (альтернатива DefinitionFile) |
-| `Value` | Значение для операции |
-| `NoValidate` | Скрыть подробный отчёт авто-валидации; обязательная проверка корректности 8.3.27 перед фиксацией остаётся включённой |
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "mcp__unica__unica_subsystem_edit_79ebeecde977",
-    "arguments": {
-      "cwd": "<workspace>",
-      "SubsystemPath": "src/Subsystems/Продажи",
-      "Operation": "add-content",
-      "Value": "Catalog.Номенклатура",
-      "dryRun": false
-    }
-  }
-}
-```
+- Preferred path: use MCP `unica` tool `mcp__unica__unica_apply_8ba7af26408e` с операциями
+  `content.add`, `content.remove`, `childSubsystem.add`,
+  `childSubsystem.remove` и `props.set`.
+- Do not call internal MCP/CLI adapters directly. They are hidden behind
+  `unica` and synchronized by the orchestrator.
+- Подсистему называет адрес: `args.at` вида `<набор>:Subsystem.<Имя>`.
+  Дочерняя — продолжением того же адреса. Путь к XML наружу не выходит; из
+  диффа или лога его переводит аварийный `mcp__unica__unica_resolve_55e2d51be222`.
+- Сначала вызови `mcp__unica__unica_apply_8ba7af26408e` с `at` и `ops`: это план без записи.
+  Когда пользователь поручил внести эту правку, вызови `mcp__unica__unica_apply_8ba7af26408e` только
+  с `executionToken` из `data.executionToken` успешного плана.
+- Проверка поддержки поставщика работает внутри `unica`. Если она блокирует
+  заблокированный объект на поддержке, предпочитай расширение или явный план
+  смены состояния поддержки, а не правку метаданных поддержки напрямую.
 
 ## Операции
 
-| Операция | Значение | Описание |
-|----------|----------|----------|
-| `add-content` | `"Catalog.X"` или `["Catalog.X","Document.Y"]` | Добавить объекты в Content |
-| `remove-content` | `"Catalog.X"` или `["Catalog.X"]` | Удалить объекты из Content |
-| `add-child` | `"ИмяПодсистемы"` | Добавить дочернюю подсистему в ChildObjects |
-| `remove-child` | `"ИмяПодсистемы"` | Удалить дочернюю подсистему |
-| `set-property` | `{"name":"prop","value":"val"}` | Изменить свойство (Synonym, IncludeInCommandInterface, UseOneCommand, etc.) |
+| Операция | `args` | Что делает |
+|---|---|---|
+| `content.add` | `items: [{object}]` | Добавляет объекты в состав |
+| `content.remove` | `items: [{object}]` | Удаляет объекты из состава |
+| `childSubsystem.add` | `items: [{name}]` | Заводит дочернюю подсистему |
+| `childSubsystem.remove` | `items: [{name}]` | Удаляет дочернюю подсистему |
+| `props.set` | `values: {…}` | Меняет свойства: `Synonym`, `IncludeInCommandInterface`, `UseOneCommand` и прочие |
+
+Элемент списка можно писать строкой вместо объекта. Операции применяются по
+порядку и публикуются одной транзакцией: либо все, либо ни одной. Повтор
+эквивалентной операции даёт `changed: false` без записи.
+
+Заведение дочерней подсистемы создаёт и её собственный файл, и ссылку на неё у
+родителя — это одна правка, а не две.
+
+Изменение состава или дочерних подсистем сохраняет ссылку картинки и
+`Picture.LoadTransparent`, включая отсутствие этого свойства и картинку без
+ссылки. Новая дочерняя подсистема получает пустую картинку. Генератор не
+добавляет служебные `&#13;` в XML.
+
+`props.set` не поддерживает `LoadTransparent` и `Picture.LoadTransparent`:
+предпросмотр и применение отклоняют эти свойства до записи.
+
+## Порядок
+
+1. Найди подсистему: `mcp__unica__unica_search_a8644a757dff {corpus: "names", kind: "Subsystem"}`.
+2. Прочти её: `mcp__unica__unica_view_6f3a42290cc8 {at}`. Состав лежит в ветви `Relation`
+   (`relation: "content"`), дочерние — в ветви `Subsystem`; вложенная
+   подсистема читается по адресу `<набор>:Subsystem.<Родитель>.Subsystem.<Имя>`.
+3. Предпросмотр: `mcp__unica__unica_apply_8ba7af26408e` с `at` и `ops`; ответ несёт план и `data.executionToken`.
+4. Применение: вызов только с `executionToken` из `data.executionToken` успешного плана.
+5. Проверка: `mcp__unica__unica_check_6db7d2a7495f {at}`.
 
 ## Примеры
 
-### Добавить объект в состав
+### Состав: добавить и убрать за один раз
 
 ```json
 {
   "jsonrpc": "2.0",
   "method": "tools/call",
   "params": {
-    "name": "mcp__unica__unica_subsystem_edit_79ebeecde977",
+    "name": "mcp__unica__unica_apply_8ba7af26408e",
     "arguments": {
-      "cwd": "<workspace>",
-      "SubsystemPath": "Subsystems/Продажи.xml",
-      "Operation": "add-content",
-      "Value": "Document.Заказ",
-      "dryRun": false
+      "at": "main:Subsystem.Продажи",
+      "ops": [
+        {
+          "op": "content.add",
+          "args": {
+            "at": "main:Subsystem.Продажи",
+            "items": [{"object": "Catalog.Товары"}, {"object": "Report.Продажи"}]
+          }
+        },
+        {
+          "op": "content.remove",
+          "args": {
+            "at": "main:Subsystem.Продажи",
+            "items": [{"object": "Report.Старый"}]
+          }
+        }
+      ]
     }
   }
 }
 ```
 
-### Добавить несколько объектов
+### Дочерняя подсистема и свойство
+
+Сначала получи план этого изменения:
 
 ```json
 {
   "jsonrpc": "2.0",
   "method": "tools/call",
   "params": {
-    "name": "mcp__unica__unica_subsystem_edit_79ebeecde977",
+    "name": "mcp__unica__unica_apply_8ba7af26408e",
     "arguments": {
-      "cwd": "<workspace>",
-      "SubsystemPath": "Subsystems/Продажи.xml",
-      "Operation": "add-content",
-      "Value": "[\"Catalog.Товары\",\"Report.Продажи\"]",
-      "dryRun": false
+      "at": "main:Subsystem.Продажи",
+      "ops": [
+        {
+          "op": "childSubsystem.add",
+          "args": {
+            "at": "main:Subsystem.Продажи",
+            "items": [
+              {
+                "name": "Заказы"
+              }
+            ]
+          }
+        },
+        {
+          "op": "props.set",
+          "args": {
+            "at": "main:Subsystem.Продажи",
+            "values": {
+              "IncludeInCommandInterface": false
+            }
+          }
+        }
+      ]
     }
   }
 }
 ```
 
-### Удалить объект из состава
+Для исполнения передай `data.executionToken` из этого успешного плана:
 
 ```json
 {
   "jsonrpc": "2.0",
   "method": "tools/call",
   "params": {
-    "name": "mcp__unica__unica_subsystem_edit_79ebeecde977",
+    "name": "mcp__unica__unica_apply_8ba7af26408e",
     "arguments": {
-      "cwd": "<workspace>",
-      "SubsystemPath": "Subsystems/Продажи.xml",
-      "Operation": "remove-content",
-      "Value": "Report.Старый",
-      "dryRun": false
-    }
-  }
-}
-```
-
-### Добавить дочернюю подсистему
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "mcp__unica__unica_subsystem_edit_79ebeecde977",
-    "arguments": {
-      "cwd": "<workspace>",
-      "SubsystemPath": "Subsystems/Продажи.xml",
-      "Operation": "add-child",
-      "Value": "НоваяДочерняя",
-      "dryRun": false
-    }
-  }
-}
-```
-
-### Изменить свойство
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "mcp__unica__unica_subsystem_edit_79ebeecde977",
-    "arguments": {
-      "cwd": "<workspace>",
-      "SubsystemPath": "Subsystems/Продажи.xml",
-      "Operation": "set-property",
-      "Value": "{\"name\":\"IncludeInCommandInterface\",\"value\":\"false\"}",
-      "dryRun": false
+      "executionToken": "<data.executionToken из успешного плана>"
     }
   }
 }

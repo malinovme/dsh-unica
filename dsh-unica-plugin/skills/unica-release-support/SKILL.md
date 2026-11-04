@@ -7,20 +7,20 @@ description: "Поддержка поставки и обновлений 1С. �
 
 ## MCP routing
 
-- Preferred path: use MCP `unica` tools `mcp__unica__unica_project_map_7cc63b822c1d`, `mcp__unica__unica_code_search_70af4c0986a7`, `mcp__unica__unica_cf_info_3ee6cc7e118b`, `mcp__unica__unica_cfe_diff_3ee597825354`, `mcp__unica__unica_meta_info_524a81764d16`, `mcp__unica__unica_code_diagnostics_43785e27e86c`, `mcp__unica__unica_standards_search_cab77e9c1bda`, `mcp__unica__unica_standards_explain_79d0ab30ea9c`, and `mcp__unica__unica_runtime_execute_0cd62fbc3716`.
-- По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `mcp__unica__unica_runtime_execute_0cd62fbc3716` с `dryRun: true`
-показывает запланированную команду без побочных эффектов, а с `dryRun: false`
-исполняет классифицированную операцию и отвечает её терминальным результатом в
-том же вызове, приложив названную причину риска (`runtime_risk_*`)
-предупреждением; неклассифицированная операция по-прежнему отказывает
-`runtime_operation_unbounded` до обнаружения рабочего пространства. Preview
-исполнением не является. Работу, которую вызов ждать не должен, запускай через
-`mcp__unica__unica_runtime_job_start_64e0bb584ac4`. Не обходи контракт прямым runner-ом или через
-`unica.build.*`.
-- Use `mcp__unica__unica_role_info_7face3da6726`, `mcp__unica__unica_dcs_info_e9d039200abc`, or form/meta tools when release risk is localized to rights, reports, forms, or metadata objects.
+- Preferred path: use MCP `unica` tools `mcp__unica__unica_view_6f3a42290cc8 {}`, `mcp__unica__unica_search_a8644a757dff`, `mcp__unica__unica_diff_14922c75f4c4` between the extension and configuration sets, `mcp__unica__unica_view_6f3a42290cc8` on the object node, `mcp__unica__unica_check_6db7d2a7495f`, `mcp__unica__unica_docs_fd15d9ecf894`, and `mcp__unica__unica_run_189d01f64719`.
+- Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
+контракт каждой — `argsSchema`, `execution`, `previewRequired`,
+`dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
+при `implemented: true` используй опубликованную `argsSchema`; при
+`support.state: limited` разрешено только подмножество `support.supportedArgs`.
+При `support.state: unavailable` остановись; не выдумывай аргументов при
+`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
+затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
+вызовами. Не обходи контракт прямым runner-ом.
+- Use `mcp__unica__unica_view_6f3a42290cc8` on the role node, `mcp__unica__unica_view_6f3a42290cc8` on the schema node, or form/meta tools when release risk is localized to rights, reports, forms, or metadata objects.
 - Do not call internal package, metadata, analyzer, standards, or runtime adapters directly. They are hidden behind MCP `unica`.
 
-Support-state checks come from `mcp__unica__unica_cf_info_3ee6cc7e118b` and object-level `mcp__unica__unica_meta_info_524a81764d16`/`mcp__unica__unica_form_info_fd2902463286`/`mcp__unica__unica_dcs_info_e9d039200abc`/`mcp__unica__unica_mxl_info_2bb8861a62b9`/`mcp__unica__unica_role_info_7face3da6726`/`mcp__unica__unica_subsystem_info_57da9ac52ecc`, which read `Ext/ParentConfigurations.bin` through Unica. Treat `Поддержка: на замке` or read-only as a release decision: prefer CFE or an explicit support-state change plan before direct mutation.
+Support-state checks come from `mcp__unica__unica_view_6f3a42290cc8` on the configuration root (`support`) and on the object node, which read `Ext/ParentConfigurations.bin` through Unica. Treat `Поддержка: на замке` or read-only as a release decision: prefer CFE or an explicit support-state change plan before direct mutation.
 
 ## References
 
@@ -33,10 +33,35 @@ Support-state checks come from `mcp__unica__unica_cf_info_3ee6cc7e118b` and obje
 ## Workflow
 
 1. Identify release scope: vendor update, extension change, merge branch, support-state change, hotfix, migration, or integration contract change.
-2. Map source-sets with `mcp__unica__unica_project_map_7cc63b822c1d`; inspect configuration and extensions with `mcp__unica__unica_cf_info_3ee6cc7e118b`, `mcp__unica__unica_cfe_diff_3ee597825354`, `mcp__unica__unica_meta_info_524a81764d16`, and `mcp__unica__unica_code_search_70af4c0986a7`.
+2. Map source-sets with `mcp__unica__unica_view_6f3a42290cc8 {}`; inspect the configuration root with `mcp__unica__unica_view_6f3a42290cc8 <set>:Configuration`, extensions with `mcp__unica__unica_diff_14922c75f4c4` between the extension and configuration sets, `mcp__unica__unica_view_6f3a42290cc8` on the object node, and `mcp__unica__unica_search_a8644a757dff`.
 3. List compatibility risks: metadata rename/delete, changed roles, changed integration contracts, data migrations, scheduled jobs, query behavior, BSP hooks, and extension interceptors.
-4. Run `mcp__unica__unica_code_diagnostics_43785e27e86c`; then use `mcp__unica__unica_runtime_execute_0cd62fbc3716` only to preview typed syntax/test/build/update arguments and record all runtime checks as unverified unless separate evidence is supplied.
+4. Run `mcp__unica__unica_check_6db7d2a7495f` on the changed modules; build and update go through `mcp__unica__unica_run_189d01f64719` (`make`, or source `push`; loading a `.cf`/`.cfe` file is unavailable, #1246) with a `dryRun: true` preview followed by explicit `dryRun: false`; test runs are outside the v0.13 surface, so record them as unverified unless separate evidence is supplied.
 5. Produce a release readiness note: blocking findings, migration steps, rollback boundary, manual checks, and Unica MCP contract gaps.
+
+## Installed extensions
+
+Исходники расширения и расширение, установленное в базе, — разные предметы.
+Состав базы спрашивай через `mcp__unica__unica_run_189d01f64719` с `op: "extensions.list"`, `args: {}`,
+`dryRun: true`, затем повтори с `dryRun: false`.
+Для одного расширения выбери запись по имени из результата списка.
+Превью платформу не запускает и состав базы не читает; исполнение открывает сеанс.
+Поля inventory приходят от провайдера платформы, порядок не гарантирован.
+`namePrefix` отражает применённое состояние базы, когда провайдер может его
+прочитать. Пустая строка означает известный пустой префикс, `null` — что
+провайдер не смог установить значение. Исходники не подменяют inventory.
+
+`extensions.set` принимает `name` и boolean `active`; остальные свойства
+адаптер раннера не поддерживает. Удаление — `push` с `args: {"delete": "Имя"}`;
+оно удаляет и данные расширения. Сначала проверь его preview, затем передай `dryRun: false`.
+Режим удаления нельзя совмещать с отправкой исходников. Выключение активности
+не равно удалению. Отдельного публичного создания пустого расширения нет:
+первая отправка `push` создаёт его из исходников. Если набор расширения
+объявлен после создания базы, `push` откажет `no_memory`: памяти об этом наборе
+у рабочей копии нет. Тогда превью `push` с `sourceSet` этого набора и `force:true`
+покажет загрузку одного расширения; исполняй её после подтверждения человека.
+Загрузка CF/CFE (`upload`) и отдельные `apply`/`reset` сейчас недоступны
+([#1246](https://github.com/IngvarConsulting/unica/issues/1246)): сообщай это
+как пробел контракта Unica MCP и не заменяй их прямым запуском раннера.
 
 ## Review checklist
 

@@ -1,4 +1,4 @@
-# Installs the DSH port of unica on Windows.
+﻿# Installs the DSH port of unica on Windows.
 #
 #   irm https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.ps1 | iex
 #
@@ -31,7 +31,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Asset = 'dsh-plugin-unica-full.tar.gz'
+$Asset = 'dsh-plugin-unica.tar.gz'
 
 function Say([string]$Message) { Write-Host $Message }
 function Die([string]$Message) { Write-Error "unica installer: $Message"; exit 1 }

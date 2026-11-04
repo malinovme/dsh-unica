@@ -12,100 +12,62 @@ allowed-tools:
 
 ## MCP routing
 
-- Preferred path: use MCP `unica` tool `mcp__unica__unica_cf_init_60b2c7880b08`; `unica` owns XML/JSON DSL work and refreshes related workspace caches after mutations.
-- Do not call internal MCP/CLI adapters directly. They are hidden behind `unica` and synchronized by the orchestrator.
-- Execution path: call MCP `unica` tool `mcp__unica__unica_cf_init_60b2c7880b08`; skill-local operation scripts are not part of the workflow.
-- For mutating operations, pass `dryRun: false` only when the user explicitly requested the change; otherwise keep the default dry run.
+- **Канонической операции создания конфигурации на поверхности нет.** Словарь
+  `mcp__unica__unica_apply_8ba7af26408e` правит существующий узел: `object.create` заводит объект
+  метаданных **внутри** конфигурации, но самого корня `Configuration.xml` не
+  создаёт.
+- Не зови внутренние адаптеры напрямую: они спрятаны за MCP `unica`.
+- Готовность проверяет `mcp__unica__unica_check_6db7d2a7495f`, результат читает `mcp__unica__unica_view_6f3a42290cc8` по адресу.
 
-Создаёт scaffold исходников пустой конфигурации 1С: `Configuration.xml`, `Languages/Русский.xml`.
+Поэтому корень новой конфигурации формируется файловыми средствами по формату
+ниже — тем же порядком, каким заводится `v8project.yaml`
+(`DEC.2026-09-09.PROJECT-CONFIG-IS-HANDWRITTEN`):
 
-## MCP параметры
+1. записать `Configuration.xml` и обязательные `Ext/`;
+2. объявить набор в `v8project.yaml` и убедиться в допуске: `mcp__unica__unica_check_6db7d2a7495f {}`;
+3. прочитать корень: `mcp__unica__unica_view_6f3a42290cc8 {at: "<набор>:Configuration"}`;
+4. дальше объекты заводит `mcp__unica__unica_apply_8ba7af26408e` (`object.create`, `props.set`).
 
-| Параметр | Описание |
-|----------|----------|
-| `Name` | Имя конфигурации (обязат.) |
-| `Synonym` | Синоним (= Name если не указан) |
-| `OutputDir` | Каталог для создания (default: `src`) |
-| `Version` | Версия конфигурации |
-| `Vendor` | Поставщик |
-| `CompatibilityMode` | Режим совместимости (default: `Version8_3_27`) |
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "mcp__unica__unica_cf_init_60b2c7880b08",
-    "arguments": {
-      "cwd": "<workspace>",
-      "Name": "DemoConfiguration",
-      "Synonym": "Демо конфигурация",
-      "OutputDir": "src",
-      "Vendor": "Ingvar Consulting",
-      "dryRun": false
-    }
-  }
-}
-```
+Если нужна именно операция создания корня — это пробел контракта Unica MCP;
+сообщи о нём, а не подменяй его правкой чужой конфигурации.
 
 ## Примеры
 
 ### Базовая конфигурация
 
+Поля, которые должен нести записанный файл:
+
 ```json
 {
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "mcp__unica__unica_cf_init_60b2c7880b08",
-    "arguments": {
-      "cwd": "<workspace>",
-      "Name": "МояКонфигурация",
-      "Synonym": "Моя конфигурация",
-      "OutputDir": "test-tmp/cf",
-      "dryRun": false
-    }
-  }
+  "Name": "МояКонфигурация",
+  "Synonym": "Моя конфигурация",
+  "OutputDir": "test-tmp/cf"
 }
 ```
 
 ### С версией и поставщиком
 
+Поля, которые должен нести записанный файл:
+
 ```json
 {
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "mcp__unica__unica_cf_init_60b2c7880b08",
-    "arguments": {
-      "cwd": "<workspace>",
-      "Name": "TestCfg",
-      "Synonym": "Тестовая",
-      "Version": "1.0.0.1",
-      "Vendor": "Фирма 1С",
-      "OutputDir": "test-tmp/cf2",
-      "dryRun": false
-    }
-  }
+  "Name": "TestCfg",
+  "Synonym": "Тестовая",
+  "Version": "1.0.0.1",
+  "Vendor": "Фирма 1С",
+  "OutputDir": "test-tmp/cf2"
 }
 ```
 
 ### Другой режим совместимости
 
+Поля, которые должен нести записанный файл:
+
 ```json
 {
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "mcp__unica__unica_cf_init_60b2c7880b08",
-    "arguments": {
-      "cwd": "<workspace>",
-      "Name": "TestCfg",
-      "CompatibilityMode": "Version8_3_27",
-      "OutputDir": "test-tmp/cf3",
-      "dryRun": false
-    }
-  }
+  "Name": "TestCfg",
+  "CompatibilityMode": "Version8_3_27",
+  "OutputDir": "test-tmp/cf3"
 }
 ```
 
@@ -120,10 +82,9 @@ allowed-tools:
   "jsonrpc": "2.0",
   "method": "tools/call",
   "params": {
-    "name": "mcp__unica__unica_cf_info_3ee6cc7e118b",
+    "name": "mcp__unica__unica_view_6f3a42290cc8",
     "arguments": {
-      "cwd": "<workspace>",
-      "ConfigPath": "test-tmp/cf"
+      "at": "main:Configuration"
     }
   }
 }
@@ -136,10 +97,9 @@ allowed-tools:
   "jsonrpc": "2.0",
   "method": "tools/call",
   "params": {
-    "name": "mcp__unica__unica_cf_validate_246a58ff9fac",
+    "name": "mcp__unica__unica_check_6db7d2a7495f",
     "arguments": {
-      "cwd": "<workspace>",
-      "ConfigPath": "test-tmp/cf"
+      "at": "<sourceSet>:Configuration"
     }
   }
 }
