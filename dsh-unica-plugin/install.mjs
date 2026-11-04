@@ -2,7 +2,8 @@
 //
 //   node install.mjs [--dsh-home <path>] [--target preset|profile|both] [--dry-run]
 //                    [--profile <name>] [--platform win32|darwin|linux]
-//                    [--cache-dir <path>] [--standard <composition.patch.yml>]
+//                    [--cache-dir <path>] [--workspace <path>]
+//                    [--standard <composition.patch.yml>]
 //
 // `--standard` builds the preset from a given composition instead of the shipped
 // `standard` one. It exists for CI, which has no DSH installed; a normal install
@@ -11,6 +12,10 @@
 // `--cache-dir` puts the runtime cache and the provider state there instead of
 // `$DSH_HOME/unica`. On Windows it is the escape hatch for a `$DSH_HOME` whose
 // directory mask refuses the server's daemon state; see the note on CACHE_DIR.
+//
+// `--workspace` pins the directory the MCP server treats as the 1C project. Unica
+// reads its workspace from the directory it is started in, so without the pin a
+// reconnect can point it at the DSH profile; see the note on WORKSPACE_ARG.
 //
 // Why an installer instead of a static tree: cordis patch files and preset
 // compositions support `!!js` expressions but have no plugin-root interpolation,
@@ -110,6 +115,17 @@ const SKILLS = join(PLUGIN_ROOT, 'skills')
  */
 const CACHE_ARG = arg('cache-dir', undefined)
 
+/**
+ * `--workspace` pins the directory the MCP server treats as the 1C project.
+ *
+ * Unica takes its workspace from the directory it is started in, and DSH restarts
+ * a dropped server from the profile directory, so without a pin a reconnect can
+ * silently point the tools at `$DSH_HOME/profiles/<profile>`. The launcher honours
+ * `UNICA_WORKSPACE_ROOT`, so the installer writes it into the same env block.
+ */
+const WORKSPACE_ARG = arg('workspace', undefined)
+const WORKSPACE = WORKSPACE_ARG === undefined ? undefined : resolve(WORKSPACE_ARG)
+
 /** Where the launcher keeps the runtime and the provider state. */
 function cachePaths(cacheDir) {
   const root = cacheDir === undefined ? DSH_HOME : resolve(cacheDir)
@@ -140,22 +156,30 @@ const COLD_TIMEOUT_MS = 1_800_000
 const EXPECTED_TOOLS = 11
 
 /**
- * The runtime's readiness marker.
+ * The runtime's readiness marker, in the artifact layout the launcher installs:
+ * `<cache>/<artifact>/<version>--<asset sha256>/<target>/.ready.json`.
  *
  * Its presence is what separates the two cases that need different budgets: a
  * cached runtime answers in seconds, while a cold one spends minutes on the
  * download and would look broken under the handshake's timeout. The launcher
- * writes this marker after it has verified and renamed the runtime into place.
+ * writes this marker after it has verified and renamed the artifact into place.
  */
 function readyMarker() {
-  return join(RUNTIMES, RUNTIME_MANIFEST.pluginVersion, LAUNCH.target, '.ready.json')
+  const core = RUNTIME_MANIFEST.artifacts?.unica?.targets?.[LAUNCH.target]
+  if (core === undefined) return join(RUNTIMES, RUNTIME_MANIFEST.pluginVersion, LAUNCH.target, '.ready.json')
+  return join(RUNTIMES, 'unica', `${RUNTIME_MANIFEST.artifacts.unica.version}--${core.asset.sha256}`, LAUNCH.target, '.ready.json')
 }
 
 /** Runs the bootstrap and gives up after `timeoutMs`, whatever it was doing. */
 function runBootstrap(timeoutMs, ask) {
   return new Promise((resolve) => {
     const child = spawn(LAUNCH.command, LAUNCH.args, {
-      env: { ...process.env, UNICA_RUNTIME_CACHE_DIR: RUNTIMES, UNICA_PROVIDER_STATE_DIR: PROVIDER_STATE },
+      env: {
+        ...process.env,
+        UNICA_RUNTIME_CACHE_DIR: RUNTIMES,
+        UNICA_PROVIDER_STATE_DIR: PROVIDER_STATE,
+        ...(WORKSPACE === undefined ? {} : { UNICA_WORKSPACE_ROOT: WORKSPACE }),
+      },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     let stdout = ''
@@ -365,13 +389,22 @@ function launchBlock(indent) {
 
 /** The comment+env block both targets share, at the given indentation. */
 function envBlock(indent) {
-  return [
+  const lines = [
     `${indent}# The runtime cache and the daemon's state root. The launcher reads both`,
     `${indent}# from the environment and would otherwise fall back to $DSH_HOME, so`,
     `${indent}# pinning them keeps every session on one cache instead of two.`,
     `${indent}UNICA_RUNTIME_CACHE_DIR: '${RUNTIMES}'`,
     `${indent}UNICA_PROVIDER_STATE_DIR: '${PROVIDER_STATE}'`,
-  ].join('\n')
+  ]
+  if (WORKSPACE !== undefined) {
+    lines.push(
+      `${indent}# The workspace comes from the directory the server is started in, and a`,
+      `${indent}# reconnect starts it from the DSH profile instead. Pinning the root keeps`,
+      `${indent}# the project from silently changing on the next restart.`,
+      `${indent}UNICA_WORKSPACE_ROOT: '${WORKSPACE}'`,
+    )
+  }
+  return lines.join('\n')
 }
 
 /**
