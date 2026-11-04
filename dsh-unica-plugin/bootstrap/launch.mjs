@@ -164,14 +164,130 @@ async function ensureRuntime() {
   return entrypoint
 }
 
-const executable = await ensureRuntime()
-if (!existsSync(executable)) die(`the runtime entrypoint is missing after install: ${executable}`)
+// ---------------------------------------------------------------------------
+// Model-visible text fallback
+//
+// Unica 0.13 answers a *successful* tools/call with `content: []` and the whole
+// payload in `structuredContent`; only failures ship a text content block (the
+// serialized envelope), which is why errors were visible and successes were not.
+// DSH's MCP bridge projects nothing but `content` blocks, so the model received
+// `(unica.view returned no model-visible content)` and never saw what a call
+// actually produced: `executionToken`, the node's `can` operation dictionary,
+// the `next` navigation hints, `taskId` of a task-based call, `view`/`check`/
+// `search`/`diff` results.
+//
+// The relay below copies an otherwise-invisible structured payload into one text
+// block and leaves `structuredContent` untouched, so a client that reads the
+// structured form keeps working and a client that reads text stops being blind.
+// It is a transport-level repair of the surface contract, not a change of it:
+// nothing is invented, dropped, or reordered, and a result that already carries
+// text is passed through byte for byte.
+//
+// UNICA_BRIDGE_TEXT_FALLBACK=0 turns the relay off (raw stdio, the pre-fix
+// behaviour). UNICA_LAUNCH_SELFTEST_COMMAND is a test-only hook: a JSON argv that
+// replaces the runtime entrypoint so tools/verify-bridge.mjs can exercise the
+// relay without the real server.
+// ---------------------------------------------------------------------------
+const TEXT_FALLBACK = process.env.UNICA_BRIDGE_TEXT_FALLBACK !== '0'
+const NEWLINE = Buffer.from('\n', 'utf8')
 
-const child = spawn(executable, [], { stdio: 'inherit' })
+/**
+ * Rewrite one JSON-RPC message so a structured-only success becomes visible.
+ * Returns the replacement message, or null when the line must pass unchanged.
+ */
+function withTextFallback(message) {
+  if (message === null || typeof message !== 'object' || Array.isArray(message)) return null
+  const result = message.result
+  if (result === null || typeof result !== 'object' || Array.isArray(result)) return null
+  const content = result.content
+  if (Array.isArray(content) && content.length > 0) return null
+  const structured = result.structuredContent
+  if (structured === undefined || structured === null) return null
+  const text = typeof structured === 'string' ? structured : JSON.stringify(structured, null, 2)
+  return { ...message, result: { ...result, content: [{ type: 'text', text }] } }
+}
+
+/** One incoming server line: parse, maybe rewrite, always answer with bytes. */
+function forwardLine(line) {
+  const asText = line.toString('utf8')
+  if (!TEXT_FALLBACK || !asText.trimStart().startsWith('{')) return Buffer.concat([line, NEWLINE])
+  let message
+  try {
+    message = JSON.parse(asText)
+  } catch {
+    return Buffer.concat([line, NEWLINE])
+  }
+  const rewritten = withTextFallback(message)
+  if (rewritten === null) return Buffer.concat([line, NEWLINE])
+  return Buffer.from(`${JSON.stringify(rewritten)}\n`, 'utf8')
+}
+
+/** Wire the client's stdio to the server's, rewriting responses on the way back. */
+function relay(child) {
+  process.stdin.on('error', () => {})
+  process.stdin.pipe(child.stdin)
+  child.stdin.on('error', () => {})
+  child.stdout.on('error', () => {})
+
+  // MCP frames are newline-delimited JSON, but a frame can be split across
+  // chunks or arrive several per chunk, so lines are assembled by hand.
+  let pending = Buffer.alloc(0)
+  child.stdout.on('data', (chunk) => {
+    pending = Buffer.concat([pending, chunk])
+    for (;;) {
+      const newline = pending.indexOf(0x0a)
+      if (newline === -1) break
+      const line = pending.subarray(0, newline)
+      pending = pending.subarray(newline + 1)
+      process.stdout.write(forwardLine(line))
+    }
+  })
+  child.stdout.on('end', () => {
+    if (pending.length > 0) process.stdout.write(forwardLine(pending))
+    pending = Buffer.alloc(0)
+  })
+}
+
+// Unica takes its workspace from the directory it was started in, and nothing on
+// its surface names another one. That makes the project depend on the parent's
+// cwd — which is not stable across a reconnect: DSH restarts a dropped server
+// from the profile directory, and the server then answers about
+// $DSH_HOME/profiles/desktop instead of the session's project. Pinning the root
+// here keeps a restart from silently moving the workspace.
+const workspaceRoot = process.env.UNICA_WORKSPACE_ROOT
+if (workspaceRoot !== undefined && workspaceRoot.trim() !== '') {
+  const resolvedRoot = resolve(workspaceRoot)
+  if (!existsSync(resolvedRoot)) die(`UNICA_WORKSPACE_ROOT points at a missing directory: ${resolvedRoot}`)
+  process.chdir(resolvedRoot)
+  console.error(`unica launcher: workspace root pinned to ${resolvedRoot}`)
+}
+
+const selfTestArgv = process.env.UNICA_LAUNCH_SELFTEST_COMMAND
+const selfTest = selfTestArgv === undefined || selfTestArgv === '' ? null : JSON.parse(selfTestArgv)
+const selfTesting = Array.isArray(selfTest) && selfTest.length > 0
+
+// A self-test replaces the runtime entirely, so it must not resolve or download
+// one: tools/verify-bridge.mjs points this at a fake server.
+const executable = selfTesting ? selfTest[0] : await ensureRuntime()
+if (!selfTesting && !existsSync(executable)) die(`the runtime entrypoint is missing after install: ${executable}`)
+
+const command = selfTesting ? selfTest[0] : executable
+const commandArgs = selfTesting ? selfTest.slice(1) : []
+
+const child = spawn(command, commandArgs, { stdio: TEXT_FALLBACK ? ['pipe', 'pipe', 'inherit'] : 'inherit' })
+if (TEXT_FALLBACK) relay(child)
 child.on('error', (error) => die(`cannot start ${executable}: ${error.message}`))
 child.on('exit', (code, signal) => {
-  if (signal !== null) process.kill(process.pid, signal)
-  else process.exit(code ?? 1)
+  if (signal !== null) return process.kill(process.pid, signal)
+  // Drain the last rewritten lines before leaving: a piped stdout is flushed
+  // asynchronously, and a bare exit() here would truncate the final response.
+  const finish = () => process.exit(code ?? 1)
+  const timer = setTimeout(finish, 1000)
+  timer.unref?.()
+  process.stdout.write('', () => {
+    clearTimeout(timer)
+    finish()
+  })
 })
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => child.kill(signal))

@@ -438,8 +438,13 @@ const PERSONA_SUFFIX = `suffix: >-
         again with only that token executes the saved plan.
       - \`unica.check\` runs every validator a node's kind owns. The per-kind
         \`*.validate\` tools of earlier versions no longer exist.
-      - Tool arguments are not described on the wire. When an argument's contract
-        matters, read it with \`unica.docs\` instead of guessing.
+      - Tool arguments are not described on the wire. What a node accepts is its
+        \`can\` list (\`unica.view\` with \`filter: {sections: ["can"]}\`), and a
+        refused call names the offending field in \`diagnostics[].message\`.
+        \`unica.docs\` searches 1C documentation, not tool contracts.
+      - \`unica.search\` with \`corpus: "text"\` matches BSL code only; metadata
+        names live in \`corpus: "names"\`. An answer that returns a \`task\` must be
+        followed through \`unica.task.result\`, not repeated.
       - Runtime and build work may fetch an engine on first use, so the first such
         call can need network and take noticeably longer than the rest.`
 
