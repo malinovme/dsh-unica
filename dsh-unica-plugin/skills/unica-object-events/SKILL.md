@@ -7,17 +7,17 @@ description: "Обработчики событий объекта 1С. Испо
 
 ## MCP routing
 
-- Preferred path: use MCP `unica` tools `mcp__unica__unica_project_map_7cc63b822c1d`, `mcp__unica__unica_meta_info_524a81764d16`, `mcp__unica__unica_code_search_70af4c0986a7`, `mcp__unica__unica_code_definition_3534a044b497`, `mcp__unica__unica_code_outline_dc58fe5ade0e`, `mcp__unica__unica_code_graph_c09c4e5a3a83`, `mcp__unica__unica_code_patch_539ea6e2f208`, `mcp__unica__unica_code_diagnostics_43785e27e86c`, and `mcp__unica__unica_runtime_execute_0cd62fbc3716`.
-- По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `mcp__unica__unica_runtime_execute_0cd62fbc3716` с `dryRun: true`
-показывает запланированную команду без побочных эффектов, а с `dryRun: false`
-исполняет классифицированную операцию и отвечает её терминальным результатом в
-том же вызове, приложив названную причину риска (`runtime_risk_*`)
-предупреждением; неклассифицированная операция по-прежнему отказывает
-`runtime_operation_unbounded` до обнаружения рабочего пространства. Preview
-исполнением не является. Работу, которую вызов ждать не должен, запускай через
-`mcp__unica__unica_runtime_job_start_64e0bb584ac4`. Не обходи контракт прямым runner-ом или через
-`unica.build.*`.
-- Use `mcp__unica__unica_standards_search_cab77e9c1bda` and `mcp__unica__unica_standards_explain_79d0ab30ea9c` for a development-standard about handlers: 396, 455, 463, 464, 465, 466, 686, 752, 773, and diagnostics АПК:75, АПК:144, АПК:1340, BSLLS:DataExchangeLoading, BSLLS:UsingCancelParameter, BSLLS:MissingEventSubscriptionHandler. These are standards, not evidence of runtime behavior; confirm the wording before citing one.
+- Preferred path: use MCP `unica` tools `mcp__unica__unica_view_6f3a42290cc8 {}`, `mcp__unica__unica_view_6f3a42290cc8` on the object node, `mcp__unica__unica_search_a8644a757dff`, `mcp__unica__unica_apply_8ba7af26408e`, `mcp__unica__unica_check_6db7d2a7495f`, and `mcp__unica__unica_run_189d01f64719`.
+- Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
+контракт каждой — `argsSchema`, `execution`, `previewRequired`,
+`dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
+при `implemented: true` используй опубликованную `argsSchema`; при
+`support.state: limited` разрешено только подмножество `support.supportedArgs`.
+При `support.state: unavailable` остановись; не выдумывай аргументов при
+`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
+затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
+вызовами. Не обходи контракт прямым runner-ом.
+- Use `mcp__unica__unica_docs_fd15d9ecf894` with `source: "development-standard"` for the standards about handlers: 396, 455, 463, 464, 465, 466, 686, 752, 773, and diagnostics АПК:75, АПК:144, АПК:1340, BSLLS:DataExchangeLoading, BSLLS:UsingCancelParameter, BSLLS:MissingEventSubscriptionHandler. These are standards, not evidence of runtime behavior; confirm the wording before citing one.
 - Do not call internal analyzer, runtime, standards, or package adapters directly. They are hidden behind MCP `unica`.
 
 ## References
@@ -42,12 +42,12 @@ Two rules cut across all of them: `ОбменДанными.Загрузка` is
 ## Workflow
 
 1. Name what the logic needs to observe — fill source, old values, written state, or nothing yet — and let that pick the handler.
-2. Locate what already runs: read the object module with `mcp__unica__unica_code_outline_dc58fe5ade0e` and `mcp__unica__unica_code_definition_3534a044b497`, and find subscriptions on the same events with `mcp__unica__unica_code_search_70af4c0986a7` and `mcp__unica__unica_meta_info_524a81764d16`. A subscription is invisible from the object module it affects.
-3. Use `mcp__unica__unica_code_graph_c09c4e5a3a83` when the handler calls shared procedures, to see what else the change reaches.
+2. Locate what already runs: read the object module with `mcp__unica__unica_view_6f3a42290cc8` on the module node (its `Method` branch lists the methods), and find subscriptions on the same events with `mcp__unica__unica_search_a8644a757dff` and `mcp__unica__unica_view_6f3a42290cc8` on the object node. A subscription is invisible from the object module it affects.
+3. Search the shared procedures the handler calls with `mcp__unica__unica_search_a8644a757dff` to see what else the change reaches; a call graph is not on the v0.13 surface.
 4. Write the guard before the logic: `Если ОбменДанными.Загрузка Тогда Возврат; КонецЕсли;` — in the subscription handler too, not only in the object module.
 5. Express conditional requiredness by collecting `НепроверяемыеРеквизиты` and removing them from `ПроверяемыеРеквизиты` at the end, never by adding to `ПроверяемыеРеквизиты`.
-6. Apply the change with `mcp__unica__unica_code_patch_539ea6e2f208`, one verifiable step at a time.
-7. Verify statically with `mcp__unica__unica_code_diagnostics_43785e27e86c`; use `mcp__unica__unica_runtime_execute_0cd62fbc3716` to preview typed syntax/test arguments and, with `dryRun: false`, to run them, and require separate runtime evidence for the exchange path when the object participates in one.
+6. Apply the change with `mcp__unica__unica_apply_8ba7af26408e`, one verifiable step at a time.
+7. Verify statically with `mcp__unica__unica_check_6db7d2a7495f` on the module node (test runs are outside the v0.13 surface), and require separate runtime evidence for the exchange path when the object participates in one.
 
 ## Design rules
 

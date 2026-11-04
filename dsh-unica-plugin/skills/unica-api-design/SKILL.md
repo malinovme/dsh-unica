@@ -9,17 +9,17 @@ description: "Проектирование и ревью API 1С: публичн
 
 ## MCP routing
 
-- Preferred path: use MCP `unica` tools `mcp__unica__unica_code_search_70af4c0986a7`, `mcp__unica__unica_code_definition_3534a044b497`, `mcp__unica__unica_code_outline_dc58fe5ade0e`, `mcp__unica__unica_code_graph_c09c4e5a3a83`, `mcp__unica__unica_code_diagnostics_43785e27e86c`, `mcp__unica__unica_project_map_7cc63b822c1d`, `mcp__unica__unica_subsystem_info_57da9ac52ecc`, `mcp__unica__unica_meta_info_524a81764d16`, `mcp__unica__unica_standards_search_cab77e9c1bda`, `mcp__unica__unica_standards_explain_79d0ab30ea9c`, and `mcp__unica__unica_runtime_execute_0cd62fbc3716`.
-- По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `mcp__unica__unica_runtime_execute_0cd62fbc3716` с `dryRun: true`
-показывает запланированную команду без побочных эффектов, а с `dryRun: false`
-исполняет классифицированную операцию и отвечает её терминальным результатом в
-том же вызове, приложив названную причину риска (`runtime_risk_*`)
-предупреждением; неклассифицированная операция по-прежнему отказывает
-`runtime_operation_unbounded` до обнаружения рабочего пространства. Preview
-исполнением не является. Работу, которую вызов ждать не должен, запускай через
-`mcp__unica__unica_runtime_job_start_64e0bb584ac4`. Не обходи контракт прямым runner-ом или через
-`unica.build.*`.
-- Use v8std through public `unica.standards.*` tools for standards 483, 543, 551, 553, and 644 before making compatibility claims.
+- Preferred path: use MCP `unica` tools `mcp__unica__unica_search_a8644a757dff`, `mcp__unica__unica_check_6db7d2a7495f`, `mcp__unica__unica_view_6f3a42290cc8 {}`, `mcp__unica__unica_view_6f3a42290cc8` on the subsystem node, `mcp__unica__unica_view_6f3a42290cc8` on the object node, `mcp__unica__unica_docs_fd15d9ecf894`, and `mcp__unica__unica_run_189d01f64719`.
+- Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
+контракт каждой — `argsSchema`, `execution`, `previewRequired`,
+`dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
+при `implemented: true` используй опубликованную `argsSchema`; при
+`support.state: limited` разрешено только подмножество `support.supportedArgs`.
+При `support.state: unavailable` остановись; не выдумывай аргументов при
+`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
+затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
+вызовами. Не обходи контракт прямым runner-ом.
+- Use v8std through `mcp__unica__unica_docs_fd15d9ecf894` with `source: "development-standard"` for standards 483, 543, 551, 553, and 644 before making compatibility claims.
 - Use `test-authoring` for unit tests that model API consumer scenarios; use `integration-implement` only when the task is about HTTP/REST/SOAP/gRPC transport implementation.
 - Do not call internal analyzer, standards, runtime, or package adapters directly. They are hidden behind MCP `unica`.
 
@@ -37,14 +37,14 @@ Classify every exported method before changing or calling it:
 
 ## Workflow
 
-1. Map source-sets with `mcp__unica__unica_project_map_7cc63b822c1d` and inspect subsystem/object boundaries with `mcp__unica__unica_subsystem_info_57da9ac52ecc` or `mcp__unica__unica_meta_info_524a81764d16`.
-2. When the API belongs to a concrete metadata object, inspect `mcp__unica__unica_meta_info_524a81764d16` for related modules, roles, subscriptions, and functional options before classifying the boundary.
-3. Find the candidate API with `mcp__unica__unica_code_definition_3534a044b497`; inspect the module with `mcp__unica__unica_code_outline_dc58fe5ade0e` before reading broad code.
-4. Use `mcp__unica__unica_code_graph_c09c4e5a3a83` for callers, callees, and impact analysis of exported methods. Use `mcp__unica__unica_code_search_70af4c0986a7` for export area comments, module suffixes, deprecated sections, literal contract mentions, and call sites not represented in graph edges.
-5. Check standards through `mcp__unica__unica_standards_explain_79d0ab30ea9c` / `mcp__unica__unica_standards_search_cab77e9c1bda`: functional subsystems, libraries, overridable modules, version numbering, and backward compatibility.
+1. Map source-sets with `mcp__unica__unica_view_6f3a42290cc8 {}` and inspect subsystem/object boundaries with `mcp__unica__unica_view_6f3a42290cc8` on the subsystem node or `mcp__unica__unica_view_6f3a42290cc8` on the object node.
+2. When the API belongs to a concrete metadata object, inspect `mcp__unica__unica_view_6f3a42290cc8` on the object node for related modules, roles, subscriptions, and functional options before classifying the boundary.
+3. Find the candidate API with `mcp__unica__unica_search_a8644a757dff`; inspect the module with `mcp__unica__unica_view_6f3a42290cc8` on the module node (its `Method` branch lists the methods) before reading broad code.
+4. Find callers and impact of exported methods with `mcp__unica__unica_search_a8644a757dff` by the method name (a call graph is not on the v0.13 surface); the same search covers export area comments, module suffixes, deprecated sections, and literal contract mentions.
+5. Check standards through `mcp__unica__unica_docs_fd15d9ecf894` with `source: "development-standard"`: functional subsystems, libraries, overridable modules, version numbering, and backward compatibility.
 6. Classify the change: new method, optional parameter, mandatory parameter, removed/renamed method, changed parameter type, behavior change, deprecated method, or direct data access across a boundary.
 7. Decide the required version impact and migration path.
-8. Verify statically with `mcp__unica__unica_code_diagnostics_43785e27e86c`; use `mcp__unica__unica_runtime_execute_0cd62fbc3716` to preview the typed syntax/test request and, with `dryRun: false`, to run it, then report syntax and runtime behavior as unverified unless separate evidence is supplied. Keep consumer-style tests for APIs with real callers.
+8. Verify statically with `mcp__unica__unica_check_6db7d2a7495f` on the module node (test runs are outside the v0.13 surface), then report runtime behavior as unverified unless separate evidence is supplied. Keep consumer-style tests for APIs with real callers.
 
 ## Compatibility rules
 
@@ -89,10 +89,10 @@ For переопределяемые modules:
   "jsonrpc": "2.0",
   "method": "tools/call",
   "params": {
-    "name": "mcp__unica__unica_standards_explain_79d0ab30ea9c",
+    "name": "mcp__unica__unica_docs_fd15d9ecf894",
     "arguments": {
-      "idOrAliasOrUrl": "644",
-      "bodyLimit": 4000
+      "query": "стандарт 644",
+      "source": "development-standard"
     }
   }
 }
@@ -103,11 +103,10 @@ For переопределяемые modules:
   "jsonrpc": "2.0",
   "method": "tools/call",
   "params": {
-    "name": "mcp__unica__unica_code_search_70af4c0986a7",
+    "name": "mcp__unica__unica_search_a8644a757dff",
     "arguments": {
-      "cwd": "<workspace>",
-      "sourceSet": "<source-set-from-project-map>",
       "query": "Устаревшие процедуры и функции",
+      "scope": "<source-set-from-unica-view>:Configuration",
       "limit": 20
     }
   }

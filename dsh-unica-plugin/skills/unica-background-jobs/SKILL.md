@@ -7,17 +7,17 @@ description: "Фоновые и регламентные задания 1С. И�
 
 ## MCP routing
 
-- Preferred path: use MCP `unica` tools `mcp__unica__unica_project_map_7cc63b822c1d`, `mcp__unica__unica_code_search_70af4c0986a7`, `mcp__unica__unica_meta_info_524a81764d16`, `mcp__unica__unica_code_diagnostics_43785e27e86c`, `mcp__unica__unica_standards_search_cab77e9c1bda`, `mcp__unica__unica_standards_explain_79d0ab30ea9c`, and `mcp__unica__unica_runtime_execute_0cd62fbc3716`.
-- По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `mcp__unica__unica_runtime_execute_0cd62fbc3716` с `dryRun: true`
-показывает запланированную команду без побочных эффектов, а с `dryRun: false`
-исполняет классифицированную операцию и отвечает её терминальным результатом в
-том же вызове, приложив названную причину риска (`runtime_risk_*`)
-предупреждением; неклассифицированная операция по-прежнему отказывает
-`runtime_operation_unbounded` до обнаружения рабочего пространства. Preview
-исполнением не является. Работу, которую вызов ждать не должен, запускай через
-`mcp__unica__unica_runtime_job_start_64e0bb584ac4`. Не обходи контракт прямым runner-ом или через
-`unica.build.*`.
-- Use `mcp__unica__unica_role_info_7face3da6726` when job behavior depends on user context or permissions.
+- Preferred path: use MCP `unica` tools `mcp__unica__unica_view_6f3a42290cc8 {}`, `mcp__unica__unica_search_a8644a757dff`, `mcp__unica__unica_view_6f3a42290cc8` on the object node, `mcp__unica__unica_check_6db7d2a7495f`, `mcp__unica__unica_docs_fd15d9ecf894`, and `mcp__unica__unica_run_189d01f64719`.
+- Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
+контракт каждой — `argsSchema`, `execution`, `previewRequired`,
+`dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
+при `implemented: true` используй опубликованную `argsSchema`; при
+`support.state: limited` разрешено только подмножество `support.supportedArgs`.
+При `support.state: unavailable` остановись; не выдумывай аргументов при
+`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
+затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
+вызовами. Не обходи контракт прямым runner-ом.
+- Use `mcp__unica__unica_view_6f3a42290cc8` on the role node when job behavior depends on user context or permissions.
 - Do not call internal runtime, analyzer, standards, or package adapters directly. They are hidden behind MCP `unica`.
 
 ## References
@@ -29,10 +29,10 @@ description: "Фоновые и регламентные задания 1С. И�
 ## Workflow
 
 1. Identify job type: scheduled job, background job launched from code, queue worker, exchange worker, or deferred integration retry.
-2. Find entry points with `mcp__unica__unica_code_search_70af4c0986a7`; inspect related metadata with `mcp__unica__unica_meta_info_524a81764d16` and project layout with `mcp__unica__unica_project_map_7cc63b822c1d`.
+2. Find entry points with `mcp__unica__unica_search_a8644a757dff`; inspect related metadata with `mcp__unica__unica_view_6f3a42290cc8` on the object node and project layout with `mcp__unica__unica_view_6f3a42290cc8 {}`.
 3. Define execution contract: parameters, user context, transaction scope, idempotency key, lock strategy, timeout, retry count, and logging fields.
 4. Check failure behavior before implementation: duplicate launch, partial write, stale lock, external service failure, session termination, and restart after crash.
-5. Run `mcp__unica__unica_code_diagnostics_43785e27e86c`; use `mcp__unica__unica_runtime_execute_0cd62fbc3716` to preview typed syntax/test/launch arguments and, with `dryRun: false`, to run it, and record runtime verification as unavailable unless separate evidence is supplied.
+5. Run `mcp__unica__unica_check_6db7d2a7495f` on the module node; launch a client through `mcp__unica__unica_run_189d01f64719` (`launch`) when the diagnosis needs one, and record runtime verification as unavailable unless separate evidence is supplied: test runs are outside the v0.13 surface.
 6. For diagnosis, build a timeline from ЖР/ТЖ and map the first failure back to module code.
 
 ## Review checklist

@@ -1,11 +1,14 @@
-// Summarises the port's surface for documentation: tool domains from the live
-// catalog and skill names grouped by prefix. Numbers here must match the shipped
+// Summarises the port's surface for documentation: tool families from the map
+// and skill names grouped by prefix. Numbers here must match the shipped
 // artifacts, so they are computed rather than hand-written.
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const ROOT = process.argv[2] ?? 'dsh-unica-plugin'
-const catalog = JSON.parse(await readFile(join(ROOT, 'tools', 'tool-catalog.json'), 'utf8'))
+// The map is what the skills actually reference. The 74-tool `tool-catalog.json`
+// that used to sit in tools/ described a surface upstream no longer has.
+const map = JSON.parse(await readFile(join(ROOT, 'tool-map.json'), 'utf8'))
+const catalog = Object.keys(map).map((name) => ({ name }))
 
 const byDomain = new Map()
 for (const t of catalog) {

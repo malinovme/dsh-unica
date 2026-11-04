@@ -7,18 +7,18 @@ description: "Моделирование метаданных 1С. Исполь�
 
 ## MCP routing
 
-- Preferred path: use MCP `unica` tools `mcp__unica__unica_project_map_7cc63b822c1d`, `mcp__unica__unica_cf_info_3ee6cc7e118b`, `mcp__unica__unica_meta_info_524a81764d16`, `mcp__unica__unica_meta_add_0bd12ddced5e`, `mcp__unica__unica_meta_edit_fbcdf19e5751`, `mcp__unica__unica_subsystem_info_57da9ac52ecc`, `mcp__unica__unica_code_search_70af4c0986a7`, `mcp__unica__unica_code_diagnostics_43785e27e86c`, and `mcp__unica__unica_runtime_execute_0cd62fbc3716`.
-- По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `mcp__unica__unica_runtime_execute_0cd62fbc3716` с `dryRun: true`
-показывает запланированную команду без побочных эффектов, а с `dryRun: false`
-исполняет классифицированную операцию и отвечает её терминальным результатом в
-том же вызове, приложив названную причину риска (`runtime_risk_*`)
-предупреждением; неклассифицированная операция по-прежнему отказывает
-`runtime_operation_unbounded` до обнаружения рабочего пространства. Preview
-исполнением не является. Работу, которую вызов ждать не должен, запускай через
-`mcp__unica__unica_runtime_job_start_64e0bb584ac4`. Не обходи контракт прямым runner-ом или через
-`unica.build.*`.
-- Use `mcp__unica__unica_standards_search_cab77e9c1bda` and `mcp__unica__unica_standards_explain_79d0ab30ea9c` for a development-standard about modelling: 432, 468, 474, 531, 587, 603, 649, 677, 697, 704, 728, and diagnostics АПК:93, АПК:304, АПК:305, АПК:1205, АПК:1207, АПК:1210-1217, АПК:1329, АПК:1330. These are standards, not evidence of runtime behavior; confirm the wording before citing one.
-- Use `mcp__unica__unica_role_info_7face3da6726` when predefined items need their interactive-deletion rights checked.
+- Preferred path: use MCP `unica` tools `mcp__unica__unica_view_6f3a42290cc8 {}`, `mcp__unica__unica_view_6f3a42290cc8` on the object node, `mcp__unica__unica_apply_8ba7af26408e`, `mcp__unica__unica_view_6f3a42290cc8` on the subsystem node, `mcp__unica__unica_search_a8644a757dff`, `mcp__unica__unica_check_6db7d2a7495f`, and `mcp__unica__unica_run_189d01f64719`.
+- Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
+контракт каждой — `argsSchema`, `execution`, `previewRequired`,
+`dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
+при `implemented: true` используй опубликованную `argsSchema`; при
+`support.state: limited` разрешено только подмножество `support.supportedArgs`.
+При `support.state: unavailable` остановись; не выдумывай аргументов при
+`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
+затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
+вызовами. Не обходи контракт прямым runner-ом.
+- Use `mcp__unica__unica_docs_fd15d9ecf894` with `source: "development-standard"` for the standards about modelling: 432, 468, 474, 531, 587, 603, 649, 677, 697, 704, 728, and diagnostics АПК:93, АПК:304, АПК:305, АПК:1205, АПК:1207, АПК:1210-1217, АПК:1329, АПК:1330. These are standards, not evidence of runtime behavior; confirm the wording before citing one.
+- Use `mcp__unica__unica_view_6f3a42290cc8` on the role node when predefined items need their interactive-deletion rights checked.
 - Do not call internal analyzer, runtime, standards, or package adapters directly. They are hidden behind MCP `unica`.
 
 ## Scope boundary
@@ -47,12 +47,12 @@ A value several objects carry identically may be a common attribute (std677) rat
 ## Workflow
 
 1. State the business question the data must answer, and who is allowed to change the set of values. That answer picks the class.
-2. Check what already exists with `mcp__unica__unica_cf_info_3ee6cc7e118b` and `mcp__unica__unica_meta_info_524a81764d16` — an existing object with the same meaning is a reason to extend rather than add — and locate the owning subsystem with `mcp__unica__unica_subsystem_info_57da9ac52ecc`.
+2. Check what already exists with `mcp__unica__unica_view_6f3a42290cc8` (the configuration root and the object) and `mcp__unica__unica_view_6f3a42290cc8` on the object node — an existing object with the same meaning is a reason to extend rather than add — and locate the owning subsystem with `mcp__unica__unica_view_6f3a42290cc8` on the subsystem node.
 3. Type every attribute deliberately: string length, composite type set, and whether a defined type already covers it (std432, std728, std704).
-4. Decide predefined items and their update mode before creating the object, and check the interactive-deletion rights with `mcp__unica__unica_role_info_7face3da6726` (std697).
-5. Create with `mcp__unica__unica_meta_add_0bd12ddced5e` and refine with `mcp__unica__unica_meta_edit_fbcdf19e5751`, one verifiable step at a time.
+4. Decide predefined items and their update mode before creating the object, and check the interactive-deletion rights with `mcp__unica__unica_view_6f3a42290cc8` on the role node (std697).
+5. Create with `mcp__unica__unica_apply_8ba7af26408e` and refine with `mcp__unica__unica_apply_8ba7af26408e`, one verifiable step at a time.
 6. Fill names, synonyms, and presentations; leaving both object and list presentation empty is АПК:93.
-7. Verify statically with `mcp__unica__unica_code_diagnostics_43785e27e86c`; use `mcp__unica__unica_runtime_execute_0cd62fbc3716` to preview typed syntax/test arguments and, with `dryRun: false`, to run them, report runtime behavior as unverified, and search existing callers with `mcp__unica__unica_code_search_70af4c0986a7` when a type changed.
+7. Verify statically with `mcp__unica__unica_check_6db7d2a7495f` on the module node (test runs are outside the v0.13 surface), report runtime behavior as unverified, and search existing callers with `mcp__unica__unica_search_a8644a757dff` when a type changed.
 
 ## Design rules
 

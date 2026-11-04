@@ -118,10 +118,14 @@ const needles = [
   'serverName: unica',
   'UNICA_PROVIDER_STATE_DIR',
   // The session rules must reach the persona suffix, not just the skill files.
-  'SourceSetNotFound',
-  'fullRebuild: true',
-  'Turnovers',
-  'Rights.xml',
+  // These are the 0.13 rules: the text they replaced named `role.edit`,
+  // `meta.add`, `role.compile` and `v8-runner`, which no longer exist.
+  'executionToken',
+  'unica.check',
+  'unica.docs',
+  'engine on first use',
+  // The launch row must reach the port's launcher, which fetches the runtime.
+  'bootstrap\\launch.mjs',
 ]
 let missing = 0
 for (const needle of needles) {
@@ -204,8 +208,14 @@ if (inserts !== 1 || strayTopLevel.length > 0) {
 }
 if (migrated.includes('stale')) throw new Error('a stale path from the retired layout survived the migration')
 
-console.log('--- step: port corrections are present in the skills')
-run(['tools/check-port-notes.mjs'])
+// The check that used to stand here proved the four 0.12 port corrections were
+// still in the skills. Both the corrections and the skills they patched are gone
+// in 0.13, so there is nothing left to guard: the tool names they described
+// (`role.edit`, `meta.add`, `role.compile`) and the `v8-runner` skill no longer
+// exist. The generator now fails on its own if a skill cites a tool the map does
+// not know, which covers the failure this step was really about.
+console.log('--- step: every tool name in the skills resolves through the map')
+run(['tools/check-tool-names.mjs'])
 
 // The patch is also judged with DSH's own package and schema, so a composition
 // the hand-rolled assertions accept but DSH refuses cannot pass. These run with
@@ -235,15 +245,16 @@ try {
 if (!rejected) throw new Error('an unsupported platform did not produce a non-zero exit')
 console.log('    ok      unsupported platform rejected')
 
-// Proves the branch the workflow claims to cover actually produced the shape it
-// claims: a POSIX install must launch through `sh launch.sh`, a Windows one must
-// go straight at the bootstrap executable. Read from the patch, which the step
-// above writes for real — the plan step is a dry run and leaves no file.
+// Proves the written patch launches the port's Node launcher and not some
+// leftover shape. Since 0.13 every host uses the same branch — upstream stopped
+// publishing per-platform bootstrap binaries — so there is one expectation, and
+// it is read from the patch the step above writes for real.
 const patchText = readFileSync(patch, 'utf8')
-const usesShell = /^\s*command: 'sh'$/m.test(patchText)
-const usesDirect = /unica-bootstrap\.exe'$/m.test(patchText)
-if (POSIX && !usesShell) throw new Error('a POSIX install did not launch through sh launch.sh')
-if (!POSIX && !usesDirect) throw new Error('a Windows install did not launch the bootstrap executable directly')
-console.log(`    ok      launch shape is ${usesShell ? 'sh launch.sh' : 'direct bootstrap'} as expected for ${PLATFORM}`)
+const usesNode = /^\s*command: 'node'$/m.test(patchText)
+const usesLauncher = /launch\.mjs'/m.test(patchText)
+if (!usesNode || !usesLauncher) {
+  throw new Error(`an install on ${PLATFORM} did not launch the Node launcher (command: node: ${usesNode}, launch.mjs: ${usesLauncher})`)
+}
+console.log(`    ok      launch shape is node launch.mjs as expected for ${PLATFORM}`)
 
 console.log('\nCI job dry-run passed: every installer step behaves as the workflow expects')

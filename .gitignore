@@ -41,3 +41,16 @@ build-report.json
 .mactest/
 .rebuild/
 .diag*/
+
+# Scratch directories used while porting and testing 0.13.
+.i13/
+.l13cache/
+.u13/
+.upstream-013/
+.upstream-013-artifacts/
+.fromarchive/
+.archinstall/
+.new-toolmap.json
+
+# Probe scripts written by hand while diagnosing the port.
+.probe-*.mjs

@@ -1,14 +1,16 @@
-# Binary payloads: never let git normalise or diff them.
+# Line-ending policy for files whose meaning depends on it.
 #
-# Note what this file can and cannot do. It does NOT carry the executable bit —
-# git records modes from the filesystem, and the 100755 on `launch.sh` and on
-# `bin/darwin-arm64/unica-bootstrap` is already in the index, so a clone on macOS
-# or Linux gets them executable. On Windows git writes 100644 for every file and
-# nothing local notices, which is why the `posix-modes` CI job asserts the modes:
-# it is the guard against a Windows commit dropping them, not this file.
-dsh-unica-plugin/bootstrap/bin/darwin-arm64/unica-bootstrap binary
-dsh-unica-plugin/bootstrap/bin/linux-x64/unica-bootstrap binary
-dsh-unica-plugin/bootstrap/bin/win-x64/unica-bootstrap.exe binary
+# The port carries no prebuilt binaries any more: upstream 0.13 stopped shipping
+# per-platform bootstrap binaries, and `bootstrap/launch.mjs` fetches the runtime
+# instead. What remains sensitive is the shell wrapper, which `sh` reads literally:
+# a CRLF arrival turns a command name into one ending in a carriage return.
+install.sh text eol=lf
 
-# The launcher is a POSIX shell script and must keep LF endings.
-dsh-unica-plugin/bootstrap/launch.sh text eol=lf
+# The Node launcher is ordinary source, but pinning LF keeps every checkout of it
+# byte-identical, which is what a release checksum is computed over.
+dsh-unica-plugin/bootstrap/launch.mjs text eol=lf
+
+# Note what this file cannot do: it does NOT carry the executable bit. Git records
+# modes from the filesystem, and on Windows git writes 100644 for every file while
+# nothing local notices. The `posix-modes` CI job asserts the bit for `install.sh`;
+# that job is the guard against a Windows commit dropping it, not this file.

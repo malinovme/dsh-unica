@@ -13,16 +13,16 @@ allowed-tools:
 Этот skill классифицирует настройки и уже предоставленное runtime evidence, не
 перебирая пользователей и не пытаясь чинить лицензирование.
 
-- По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `mcp__unica__unica_runtime_execute_0cd62fbc3716` с `dryRun: true`
-показывает запланированную команду без побочных эффектов, а с `dryRun: false`
-исполняет классифицированную операцию и отвечает её терминальным результатом в
-том же вызове, приложив названную причину риска (`runtime_risk_*`)
-предупреждением; неклассифицированная операция по-прежнему отказывает
-`runtime_operation_unbounded` до обнаружения рабочего пространства. Preview
-исполнением не является. Работу, которую вызов ждать не должен, запускай через
-`mcp__unica__unica_runtime_job_start_64e0bb584ac4`. Не обходи контракт прямым runner-ом или через
-`unica.build.*`.
-- Пока applied runtime закрыт, не запускай auth probe и не выдавай чтение connection string или preview за успешное подключение к ИБ.
+- Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
+контракт каждой — `argsSchema`, `execution`, `previewRequired`,
+`dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
+при `implemented: true` используй опубликованную `argsSchema`; при
+`support.state: limited` разрешено только подмножество `support.supportedArgs`.
+При `support.state: unavailable` остановись; не выдумывай аргументов при
+`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
+затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
+вызовами. Не обходи контракт прямым runner-ом.
+- Не запускай auth probe через `mcp__unica__unica_run_189d01f64719` и не выдавай чтение connection string или превью за успешное подключение к ИБ.
 
 ## Жесткие стопы
 
@@ -56,7 +56,7 @@ allowed-tools:
    - лицензия → hard stop;
    - неверный пользователь/пароль → вопрос пользователю либо классификация следующего уже проверенного кандидата;
    - база недоступна/путь неверный → сообщи конкретную ошибку и остановись.
-5. Не вызывай applied `mcp__unica__unica_runtime_execute_0cd62fbc3716`, `unica.build.*`, `unica.runtime.job.*` или прямой runner ради auth-check.
+5. Не вызывай `mcp__unica__unica_run_189d01f64719` с применением или прямой runner ради auth-check.
 
 ## Передача credentials
 

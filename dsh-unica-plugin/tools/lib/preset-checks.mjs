@@ -120,30 +120,29 @@ export function checkPreset(path, searchDirs = [], kind = 'patch') {
     throw new Error('the shipped persona suffix text was lost')
   }
   // A folded scalar that broke on indentation parses to different text, and the
-  // rules would disappear without any error — hence checking the values.
-  for (const needle of ['SourceSetNotFound', 'fullRebuild: true', 'Turnovers', 'Rights.xml', 'role.validate']) {
+  // rules would disappear without any error — hence checking the values. These
+  // are the 0.13 rules; the 0.12 ones named `role.edit`, `meta.add`,
+  // `role.compile` and `v8-runner`, none of which exists on the new surface.
+  for (const needle of ['executionToken', 'unica.check', 'unica.docs', 'engine on first use']) {
     if (!suffix.includes(needle)) throw new Error(`session rule lost from the persona suffix: ${needle}`)
   }
 
   const mcp = rows.find((r) => r.id === 'mcp-unica')
   const args = mcp?.config?.args
   if (!Array.isArray(args) || args.length === 0) throw new Error('the mcp row lost its args')
-  // The launch shape is platform-dependent, so the argument that proves the
-  // plugin root reached the command differs: Windows execs the bootstrap with
-  // `run --plugin-root <root>`, while POSIX runs `sh launch.sh <root>` and the
-  // script derives the rest itself. Accepting only the Windows shape made this
-  // check pass locally and fail on the runner.
+  // Every host launches the port's Node script the same way — `node launch.mjs
+  // <root>` — because upstream 0.13 stopped publishing per-platform bootstrap
+  // binaries. The argument list still has to prove the plugin root reached the
+  // command, or the launcher cannot find its runtime manifest.
   const command = mcp?.config?.command ?? ''
-  const carriesRoot =
-    command.endsWith('unica-bootstrap.exe')
-      ? args.includes('--plugin-root')
-      : command === 'sh'
-        ? args.some((a) => a.endsWith('launch.sh'))
-        : false
+  const carriesRoot = command === 'node' && args.some((a) => a.endsWith('launch.mjs'))
   if (!carriesRoot) {
     throw new Error(
-      `the mcp row does not pass the plugin root in a recognised launch shape: command="${command}" args=${JSON.stringify(args)}`,
+      `the mcp row does not launch the Node launcher: command="${command}" args=${JSON.stringify(args)}`,
     )
+  }
+  if (!args.some((a) => args.indexOf(a) > args.findIndex((x) => x.endsWith('launch.mjs')))) {
+    throw new Error(`the launcher is not given the plugin root: args=${JSON.stringify(args)}`)
   }
 
   // The bundled catalog has to reach the session, and it only does through this

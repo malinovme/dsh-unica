@@ -1,8 +1,8 @@
 # dsh-plugin-unica — cordis patch layer.
 #
-# Mounts the unica MCP server as native DSH tools. Its 74 tools reach the model
-# as `mcp__unica__<raw name with dots replaced by underscores>_<hash12>`, for
-# example `unica.cf.init` -> `mcp__unica__unica_cf_init_60b2c7880b08`.
+# Mounts the unica MCP server as native DSH tools. Its eleven tools (Unica 0.13)
+# reach the model as `mcp__unica__<raw name with dots replaced by underscores>_<hash12>`,
+# for example `unica.view` -> `mcp__unica__unica_view_6f3a42290cc8`.
 #
 # PLUGIN_ROOT and DSH_HOME are substituted by install.mjs, which writes the
 # resolved absolute paths into the generated patch. They are not DSH variables:
@@ -11,27 +11,24 @@
 
 - insert:
     # ── the MCP bridge ──────────────────────────────────────────────────────
-    # `command` is the packaged bootstrap, NOT the core. The bootstrap verifies
+    # `command` is the port's Node launcher, NOT the server. The launcher verifies
     # the pinned runtime against runtime-manifest.json (archive + per-file
-    # SHA-256), publishes it into the cache atomically, and then execs the single
-    # `unica` stdio MCP process. Launching `unica.exe` from the cache directly
-    # would skip that verification.
+    # SHA-256), publishes it into the cache atomically, and then execs `unica`.
+    # Upstream 0.13 ships no per-platform bootstrap binary, which is why this is
+    # Node: DSH already requires it and the port then carries no prebuilt binaries.
     - id: mcp-unica
       name: '@deepseek-ai/dsh-mcp-client'
       config:
         serverName: unica
         transport: stdio
-        command: 'PLUGIN_ROOT\bootstrap\bin\win-x64\unica-bootstrap.exe'
+        command: 'node'
         args:
-          - run
-          - --plugin-root
+          - 'PLUGIN_ROOT\bootstrap\launch.mjs'
           - 'PLUGIN_ROOT'
-        # Both writable directories the bootstrap owns are resolved by falling
-        # back through UNICA_*_DIR, CLAUDE_PLUGIN_DATA, CODEX_HOME and ~/.codex
-        # in that order. Pinning both keeps this port from writing into a Codex
-        # or Claude Code installation that happens to share the machine.
-        # A value still containing '${' is discarded by the bootstrap, so
-        # literal absolute paths are the correct form here.
+        # The runtime cache and the server daemon's state root. The launcher reads
+        # both from the environment and would otherwise fall back to $DSH_HOME;
+        # pinning them keeps a session out of a Codex or Claude Code install that
+        # happens to share the machine.
         env:
           UNICA_RUNTIME_CACHE_DIR: 'DSH_HOME\unica\runtimes'
           UNICA_PROVIDER_STATE_DIR: 'DSH_HOME\unica\provider-state'

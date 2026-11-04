@@ -7,33 +7,18 @@ description: "Проектирование регистров 1С. Исполь�
 
 ## MCP routing
 
-## Правка порта: вид регистра задаётся не инструментом
-
-`mcp__unica__unica_meta_add_0bd12ddced5e` и `mcp__unica__unica_meta_edit_fbcdf19e5751` **не принимают `RegisterType`** в
-`setProperties`. Генератор в этом случае пишет
-`<RegisterType>Balance</RegisterType>`, тогда как спецификация
-`references/specs/1c-config-objects-spec.md` называет значения `Balances` и
-`Turnovers`. Вид регистра выбирается выше по тексту, но задать его через MCP
-нельзя.
-
-Практическое следствие: после `meta.add` регистр накопления получает
-`Balance` независимо от замысла. Чтобы получить `Turnovers`, правь
-`<RegisterType>` в XML дескриптора напрямую и проверяй результат `cf.validate`
-или `meta.info`. Не выдавай `Balance` за выбранный вид — это дефолт
-генератора, а не решение.
-
-- Preferred path: use MCP `unica` tools `mcp__unica__unica_project_map_7cc63b822c1d`, `mcp__unica__unica_meta_info_524a81764d16`, `mcp__unica__unica_meta_add_0bd12ddced5e`, `mcp__unica__unica_meta_edit_fbcdf19e5751`, `mcp__unica__unica_code_search_70af4c0986a7`, `mcp__unica__unica_code_outline_dc58fe5ade0e`, `mcp__unica__unica_dcs_info_e9d039200abc`, `mcp__unica__unica_code_diagnostics_43785e27e86c`, and `mcp__unica__unica_runtime_execute_0cd62fbc3716`.
-- По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `mcp__unica__unica_runtime_execute_0cd62fbc3716` с `dryRun: true`
-показывает запланированную команду без побочных эффектов, а с `dryRun: false`
-исполняет классифицированную операцию и отвечает её терминальным результатом в
-том же вызове, приложив названную причину риска (`runtime_risk_*`)
-предупреждением; неклассифицированная операция по-прежнему отказывает
-`runtime_operation_unbounded` до обнаружения рабочего пространства. Preview
-исполнением не является. Работу, которую вызов ждать не должен, запускай через
-`mcp__unica__unica_runtime_job_start_64e0bb584ac4`. Не обходи контракт прямым runner-ом или через
-`unica.build.*`.
-- Use `mcp__unica__unica_standards_search_cab77e9c1bda` and `mcp__unica__unica_standards_explain_79d0ab30ea9c` for a development-standard about registers: 447, 477, 657, 661, 663, 664, 708, 733, 792, and diagnostics АПК:123, АПК:229, BSLLS:DenyIncompleteValues, BSLLS:VirtualTableCallWithoutParameters. These are standards, not evidence of runtime behavior; confirm the wording before citing one.
-- Use `mcp__unica__unica_role_info_7face3da6726` when the register is subordinate to a recorder or carries access restrictions.
+- Preferred path: use MCP `unica` tools `mcp__unica__unica_view_6f3a42290cc8 {}`, `mcp__unica__unica_view_6f3a42290cc8` on the object node, `mcp__unica__unica_apply_8ba7af26408e`, `mcp__unica__unica_search_a8644a757dff`, `mcp__unica__unica_view_6f3a42290cc8` on the schema node, `mcp__unica__unica_check_6db7d2a7495f`, and `mcp__unica__unica_run_189d01f64719`.
+- Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
+контракт каждой — `argsSchema`, `execution`, `previewRequired`,
+`dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
+при `implemented: true` используй опубликованную `argsSchema`; при
+`support.state: limited` разрешено только подмножество `support.supportedArgs`.
+При `support.state: unavailable` остановись; не выдумывай аргументов при
+`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
+затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
+вызовами. Не обходи контракт прямым runner-ом.
+- Use `mcp__unica__unica_docs_fd15d9ecf894` with `source: "development-standard"` for the standards about registers: 447, 477, 657, 661, 663, 664, 708, 733, 792, and diagnostics АПК:123, АПК:229, BSLLS:DenyIncompleteValues, BSLLS:VirtualTableCallWithoutParameters. These are standards, not evidence of runtime behavior; confirm the wording before citing one.
+- Use `mcp__unica__unica_view_6f3a42290cc8` on the role node when the register is subordinate to a recorder or carries access restrictions.
 - Do not call internal analyzer, runtime, standards, or package adapters directly. They are hidden behind MCP `unica`.
 
 ## References
@@ -57,12 +42,12 @@ Totals separation is the decision that pulls both ways: std664 wants it for writ
 
 1. State the accounting subject and the questions the register must answer. One subject, one register.
 2. Pick the class, then split every field into dimension, resource, or attribute before creating anything. Check the receipt/expense rule for every candidate dimension of a `Balances` register.
-3. Inspect neighbours with `mcp__unica__unica_meta_info_524a81764d16` — an existing register with the same subject is a reason to extend rather than add — and locate the read paths with `mcp__unica__unica_code_search_70af4c0986a7`, `mcp__unica__unica_code_outline_dc58fe5ade0e`, and `mcp__unica__unica_dcs_info_e9d039200abc`.
+3. Inspect neighbours with `mcp__unica__unica_view_6f3a42290cc8` on the object node — an existing register with the same subject is a reason to extend rather than add — and locate the read paths with `mcp__unica__unica_search_a8644a757dff`, `mcp__unica__unica_view_6f3a42290cc8` on the module node (its `Method` branch lists the methods), and `mcp__unica__unica_view_6f3a42290cc8` on the schema node.
 4. Decide periodicity and `WriteMode` for an information register, and whether every std708 condition holds before enabling `EnableTotalsSliceLast` or `EnableTotalsSliceFirst`.
 5. Decide `EnableTotalsSplitting` against the read paths found in step 3, not in the abstract.
 6. Set `DenyIncompleteValues` on dimensions that must always carry a value, and decide `Master` deliberately: it makes record lifetime follow the master value.
-7. Create with `mcp__unica__unica_meta_add_0bd12ddced5e` and refine with `mcp__unica__unica_meta_edit_fbcdf19e5751`, one verifiable step at a time.
-8. Verify statically with `mcp__unica__unica_code_diagnostics_43785e27e86c`; use `mcp__unica__unica_runtime_execute_0cd62fbc3716` to preview typed syntax/test arguments and, with `dryRun: false`, to run them, report runtime behavior as unverified, and re-check the read paths that step 5 traded against.
+7. Create with `mcp__unica__unica_apply_8ba7af26408e` and refine with `mcp__unica__unica_apply_8ba7af26408e`, one verifiable step at a time.
+8. Verify statically with `mcp__unica__unica_check_6db7d2a7495f` on the module node (test runs are outside the v0.13 surface), report runtime behavior as unverified, and re-check the read paths that step 5 traded against.
 
 ## Design rules
 

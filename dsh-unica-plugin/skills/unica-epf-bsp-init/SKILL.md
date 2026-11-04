@@ -13,15 +13,15 @@ allowed-tools:
 
 Добавляет в модуль объекта обработки функцию `СведенияОВнешнейОбработке()`, необходимую для регистрации в подсистеме «Дополнительные отчёты и обработки» БСП.
 
-- По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `mcp__unica__unica_runtime_execute_0cd62fbc3716` с `dryRun: true`
-показывает запланированную команду без побочных эффектов, а с `dryRun: false`
-исполняет классифицированную операцию и отвечает её терминальным результатом в
-том же вызове, приложив названную причину риска (`runtime_risk_*`)
-предупреждением; неклассифицированная операция по-прежнему отказывает
-`runtime_operation_unbounded` до обнаружения рабочего пространства. Preview
-исполнением не является. Работу, которую вызов ждать не должен, запускай через
-`mcp__unica__unica_runtime_job_start_64e0bb584ac4`. Не обходи контракт прямым runner-ом или через
-`unica.build.*`.
+- Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
+контракт каждой — `argsSchema`, `execution`, `previewRequired`,
+`dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
+при `implemented: true` используй опубликованную `argsSchema`; при
+`support.state: limited` разрешено только подмножество `support.supportedArgs`.
+При `support.state: unavailable` остановись; не выдумывай аргументов при
+`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
+затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
+вызовами. Не обходи контракт прямым runner-ом.
 
 ## Usage
 
@@ -157,7 +157,7 @@ allowed-tools:
 1. Найди `ObjectModule.bsl` через Glob: `src/{{ProcessorName}}/Ext/ObjectModule.bsl`
 2. Прочитай файл
 3. Если `СведенияОВнешнейОбработке` уже есть — сообщи пользователю и не дублируй
-4. Если файл не найден — предложи создать scaffold через `mcp__unica__unica_epf_init_31830f963d46`; если external source-set не зарегистрирован в предоставленном `v8project.yaml`, сообщи о runtime contract gap и не обходи его прямым runner-ом, `unica.build.*` или `unica.runtime.job.*`
+4. Если файл не найден — предложи создать дескриптор и модуль по формату из `epf-init` (канонической операции создания внешней обработки нет); если external source-set не зарегистрирован в предоставленном `v8project.yaml`, сообщи о runtime contract gap и не обходи его прямым runner-ом
 5. Найди область `#Область ПрограммныйИнтерфейс` ... `#КонецОбласти`
 6. Вставь функцию `СведенияОВнешнейОбработке()` внутрь этой области
 7. Если вид требует серверный обработчик — вставь его тоже в эту область, после функции
@@ -212,17 +212,19 @@ allowed-tools:
 
 ## Дальнейшие шаги
 
-- По INV-MCP-RUNTIME-RECEIPT и ADR-0074: `mcp__unica__unica_runtime_execute_0cd62fbc3716` с `dryRun: true`
-показывает запланированную команду без побочных эффектов, а с `dryRun: false`
-исполняет классифицированную операцию и отвечает её терминальным результатом в
-том же вызове, приложив названную причину риска (`runtime_risk_*`)
-предупреждением; неклассифицированная операция по-прежнему отказывает
-`runtime_operation_unbounded` до обнаружения рабочего пространства. Preview
-исполнением не является. Работу, которую вызов ждать не должен, запускай через
-`mcp__unica__unica_runtime_job_start_64e0bb584ac4`. Не обходи контракт прямым runner-ом или через
-`unica.build.*`.
+- Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
+контракт каждой — `argsSchema`, `execution`, `previewRequired`,
+`dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
+при `implemented: true` используй опубликованную `argsSchema`; при
+`support.state: limited` разрешено только подмножество `support.supportedArgs`.
+При `support.state: unavailable` остановись; не выдумывай аргументов при
+`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
+затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
+вызовами. Не обходи контракт прямым runner-ом.
 
 - Добавить ещё команду: `/epf-bsp-add-command`
-- Добавить форму: `/form-add`
-- Добавить макет: `/template-add`
-- Предпросмотреть команду сборки EPF: `v8-runner` skill, MCP `mcp__unica__unica_runtime_execute_0cd62fbc3716`, `operation=make`, `sourceSet=<external-processors>`, `output=build/external`, `dryRun=true`; сам `.epf` этот preview не собирает.
+- Добавить форму: `mcp__unica__unica_apply_8ba7af26408e` с операцией `form.add` (словарь операций отдаёт `mcp__unica__unica_view_6f3a42290cc8` в секции `can`)
+- Добавить макет: `/meta-edit` (операция `add` по коллекции `templates`)
+- Для runtime-сборки сначала запросить словарь `mcp__unica__unica_run_189d01f64719 {}` и использовать
+  `make` только когда операция помечена `implemented: true`; не
+  угадывать аргументы при `argsSchema: null` и не считать preview собранным `.epf`.

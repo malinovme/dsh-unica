@@ -10,7 +10,7 @@
 //
 // `--cache-dir` puts the runtime cache and the provider state there instead of
 // `$DSH_HOME/unica`. On Windows it is the escape hatch for a `$DSH_HOME` whose
-// directory mask refuses the bootstrap's lock files; see the note on CACHE_DIR.
+// directory mask refuses the server's daemon state; see the note on CACHE_DIR.
 //
 // Why an installer instead of a static tree: cordis patch files and preset
 // compositions support `!!js` expressions but have no plugin-root interpolation,
@@ -61,52 +61,56 @@ const PATCH_PROFILE = PROFILE_ARG ?? 'headless'
 /**
  * Picks how the MCP server is launched on the target platform.
  *
- * Two shapes, because they have different requirements:
- *   - Windows: exec the packaged `unica-bootstrap.exe` directly. No shell and no
- *     Git are involved, so this is the least fragile option there.
- *   - macOS / Linux: run the upstream `bootstrap/launch.sh` through `sh`. That
- *     script is where upstream keeps its OS/arch dispatch, so using it means
- *     this port does not duplicate the target table. It needs no Git here
- *     either: Git is only required by the *marketplace* `.mcp.json`, which
- *     routes through a command-scoped Git alias to recover the plugin root.
- *     DSH passes the plugin root as a plain argument, so the alias is moot.
+ * One shape for every host: the port's own Node launcher, which reads
+ * `runtime-manifest.json`, fetches the runtime archive described there on first
+ * use and hands over to the server. Upstream 0.13 publishes no per-platform
+ * bootstrap binary any more, and a launcher in Node needs nothing installed beyond
+ * the runtime DSH already requires — so there is no OS/arch table to duplicate
+ * here, and no prebuilt binary for this port to carry.
  */
 function launchPlan() {
   const force = arg('platform', undefined)
   const platform = force ?? process.platform
   const arch = force === undefined ? process.arch : arg('arch', process.arch)
+  const target = targetFor(platform, arch)
+  if (target === undefined) {
+    throw new Error(
+      `unsupported platform "${platform}/${arch}": unica publishes runtimes for darwin-arm64, linux-x64 and win-x64 only. ` +
+        `Pass --platform win32|darwin|linux to override.`,
+    )
+  }
+  const launcher = join(PLUGIN_ROOT, 'bootstrap', 'launch.mjs')
+  return { kind: 'node', platform, arch, target, command: 'node', args: [launcher, PLUGIN_ROOT], exe: launcher }
+}
 
-  if (platform === 'win32') {
-    const exe = join(PLUGIN_ROOT, 'bootstrap', 'bin', 'win-x64', 'unica-bootstrap.exe')
-    return { kind: 'direct', platform, arch, command: exe, args: ['run', '--plugin-root', PLUGIN_ROOT], exe }
-  }
-  if (platform === 'darwin' || platform === 'linux') {
-    const sh = join(PLUGIN_ROOT, 'bootstrap', 'launch.sh')
-    return { kind: 'shell', platform, arch, command: 'sh', args: [sh, PLUGIN_ROOT], exe: sh }
-  }
-  throw new Error(
-    `unsupported platform "${platform}": unica ships bootstrap binaries for darwin-arm64, linux-x64 and win-x64 only. ` +
-      `Pass --platform win32|darwin|linux to override.`,
-  )
+/** The upstream runtime target for a platform pair, or undefined. */
+function targetFor(platform, arch) {
+  if (platform === 'win32' && arch === 'x64') return 'win-x64'
+  if (platform === 'darwin' && arch === 'arm64') return 'darwin-arm64'
+  if (platform === 'linux' && arch === 'x64') return 'linux-x64'
+  return undefined
 }
 
 const LAUNCH = launchPlan()
 const SKILLS = join(PLUGIN_ROOT, 'skills')
 
 /**
- * Both writable directories the bootstrap owns.
+ * Both writable directories the port owns: the runtime cache and the state root
+ * of the server's user daemon.
  *
  * `--cache-dir` moves them together, and on Windows it is sometimes the only way
- * to get a working MCP server. The bootstrap writes lock and transaction files
- * next to the runtime, and a `$DSH_HOME` under the user profile can carry a
- * directory mask that refuses it: the process then dies with
- * `unica-bootstrap: Отказано в доступе. (os error 5)` about twenty milliseconds
- * in, the MCP client reports `initial connection or tool synchronization
- * failed`, and a preset that carries that row shows up as failed to load.
+ * to get a working MCP server. Unica 0.13 keeps a persistent user daemon whose
+ * state root it opens at startup, and a `$DSH_HOME` under the user profile can
+ * carry a directory mask that refuses it: the server then dies with
+ * `open daemon provider state root: Отказано в доступе. (os error 5)`, the MCP
+ * client reports `initial connection or tool synchronization failed`, and a
+ * preset that carries that row shows up as failed to load. The same directory
+ * mask refused the 0.12 bootstrap's lock files, so this escape hatch predates the
+ * daemon and outlived it.
  */
 const CACHE_ARG = arg('cache-dir', undefined)
 
-/** Where the bootstrap keeps its runtime and the provider state. */
+/** Where the launcher keeps the runtime and the provider state. */
 function cachePaths(cacheDir) {
   const root = cacheDir === undefined ? DSH_HOME : resolve(cacheDir)
   return cacheDir === undefined
@@ -125,22 +129,26 @@ async function emit(path, content) {
   await writeFile(path, content, 'utf8')
 }
 
+/** The runtime manifest this port ships: one descriptor per upstream target. */
+const RUNTIME_MANIFEST = JSON.parse(readFileSync(join(PLUGIN_ROOT, 'runtime-manifest.json'), 'utf8'))
+
 /** How long the MCP handshake is given when the runtime is already cached. */
 const SMOKE_TIMEOUT_MS = 120_000
-/** The budget for a cold cache, which must download and verify ~100 MB first. */
+/** The budget for a cold cache, which must download and verify the runtime first. */
 const COLD_TIMEOUT_MS = 1_800_000
-const EXPECTED_TOOLS = 74
+/** The tool surface of Unica 0.13: eleven tools, not 74 domain actions. */
+const EXPECTED_TOOLS = 11
 
 /**
  * The runtime's readiness marker.
  *
  * Its presence is what separates the two cases that need different budgets: a
  * cached runtime answers in seconds, while a cold one spends minutes on the
- * download and would look broken under the handshake's timeout.
+ * download and would look broken under the handshake's timeout. The launcher
+ * writes this marker after it has verified and renamed the runtime into place.
  */
 function readyMarker() {
-  const target = LAUNCH.platform === 'win32' ? 'win-x64' : LAUNCH.platform === 'darwin' ? 'darwin-arm64' : 'linux-x64'
-  return join(RUNTIMES, '0.12.3', target, '.ready.json')
+  return join(RUNTIMES, RUNTIME_MANIFEST.pluginVersion, LAUNCH.target, '.ready.json')
 }
 
 /** Runs the bootstrap and gives up after `timeoutMs`, whatever it was doing. */
@@ -358,10 +366,9 @@ function launchBlock(indent) {
 /** The comment+env block both targets share, at the given indentation. */
 function envBlock(indent) {
   return [
-    `${indent}# Both writable directories are resolved by falling back through`,
-    `${indent}# UNICA_*_DIR, CLAUDE_PLUGIN_DATA, CODEX_HOME and ~/.codex in that order.`,
-    `${indent}# Pinning both keeps this port out of a Codex or Claude Code install`,
-    `${indent}# that happens to share the machine.`,
+    `${indent}# The runtime cache and the daemon's state root. The launcher reads both`,
+    `${indent}# from the environment and would otherwise fall back to $DSH_HOME, so`,
+    `${indent}# pinning them keeps every session on one cache instead of two.`,
     `${indent}UNICA_RUNTIME_CACHE_DIR: '${RUNTIMES}'`,
     `${indent}UNICA_PROVIDER_STATE_DIR: '${PROVIDER_STATE}'`,
   ].join('\n')
@@ -409,26 +416,32 @@ const PROFILE_BANNER = `# Unica for DeepSeek Harness — profile patch, maintain
  * section names globally, so a duplicate row collides and fails loud. The rules
  * are therefore injected into the shipped persona row's own `suffix` template,
  * which is what makes them permanent for the session.
+ *
+ * These describe Unica 0.13 and replace the four 0.12 field corrections, which
+ * named `role.edit`, `meta.add`, `role.compile` and `v8-runner`. None of those
+ * tools exists now: 0.13 collapsed 74 domain actions into eleven tools, and the
+ * problems those corrections warned about are answered by the new contract —
+ * `apply` plans before it writes, `check` owns the validators. Keeping the old
+ * text would have been worse than having no rules, because the model would have
+ * followed instructions for a tool surface that no longer exists.
  */
 const PERSONA_ANCHOR = 'suffix: Your working directory is {{cwd}}.'
 const PERSONA_SUFFIX = `suffix: >-
       Your working directory is {{cwd}}.
 
       Unica rules for this session:
-      - Always pass \`cwd\` explicitly to every \`unica.*\` call. Without it the
-        core resolves the project from the home directory and fails with
-        \`SourceSetNotFound\`; some tools, such as \`unica.role.edit\`, do not
-        accept \`cwd\` at all and resolve nothing.
-      - A failed partial build must be retried once with \`fullRebuild: true\`
-        rather than repeated unchanged. The automatic full retry covers only a
-        structured result after v8-runner exit code 4, so a platform read
-        failure of the partial file list is not retried.
-      - \`unica.meta.add\` cannot set a register's kind. The generator writes
-        \`Balance\`; a register that needs \`Turnovers\` is corrected in the
-        descriptor XML and re-checked.
-      - An existing role cannot be updated by tools: \`unica.role.compile\`
-        skips it even with \`force\`. Edit \`Rights.xml\` and verify with
-        \`unica.role.validate\`.`
+      - Address work with \`at\` (\`<sourceSet>:<Kind>[.<Name>...]\`). There is no
+        \`cwd\` argument: the workspace comes from the session, and
+        \`unica.resolve\` names the available sets.
+      - \`unica.apply\` plans before it writes. The call that carries \`at\` and
+        \`ops\` returns \`data.executionToken\` and changes nothing; calling it
+        again with only that token executes the saved plan.
+      - \`unica.check\` runs every validator a node's kind owns. The per-kind
+        \`*.validate\` tools of earlier versions no longer exist.
+      - Tool arguments are not described on the wire. When an argument's contract
+        matters, read it with \`unica.docs\` instead of guessing.
+      - Runtime and build work may fetch an engine on first use, so the first such
+        call can need network and take noticeably longer than the rest.`
 
 /**
  * The Web-GUI target. Web sessions are composed from an agent preset, and the
@@ -454,9 +467,10 @@ function presetRow(standardYaml) {
 
   const mcpRow = `
 # ── added by dsh-plugin-unica ────────────────────────────────────────────────
-# The unica MCP bridge. Its 74 tools reach the model as
+# The unica MCP bridge. Its eleven tools reach the model as
 # mcp__unica__<raw name with '.'->'_'>_<hash12>, e.g.
-# unica.cf.init -> mcp__unica__unica_cf_init_60b2c7880b08.
+# unica.view -> mcp__unica__unica_view_6f3a42290cc8.
+# The launched script fetches the runtime archive on first use.
 - id: mcp-unica
   name: '@deepseek-ai/dsh-mcp-client'
   config:
