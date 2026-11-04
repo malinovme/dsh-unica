@@ -22,6 +22,14 @@ const OUT = resolve(outArg === -1 ? join(PLUGIN_ROOT, '..', 'dsh-plugin-unica.ta
 const EXCLUDE_DIRS = new Set(['node_modules'])
 const EXCLUDE_FILES = new Set(['build-report.json', '.package-filelist.txt'])
 
+// A release built on Windows must still ship a launcher every host can run. The
+// file that used to need this was upstream's `launch.sh`; 0.13 removed it, so the
+// check moves to the Node launcher, which `sh` no longer reads but which is still
+// compared byte-for-byte against the published checksum.
+if ((await readFile(join(PLUGIN_ROOT, 'bootstrap', 'launch.mjs'), 'utf8')).includes('\r')) {
+  throw new Error('bootstrap/launch.mjs must use LF line endings — refusing to package')
+}
+
 async function* walk(dir, rel = '') {
   for (const e of await readdir(dir, { withFileTypes: true })) {
     const abs = join(dir, e.name)

@@ -18,6 +18,22 @@
 curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | sh
 ```
 
+Для приватного репозитория на macOS / Linux сначала авторизуйте GitHub CLI
+командой `gh auth login --hostname github.com` (аккаунт должен иметь доступ к
+репозиторию), затем выполните:
+
+```sh
+gh api -H "Accept: application/vnd.github.raw+json" repos/malinovme/dsh-unica/contents/install.sh | sh
+```
+
+Авторизованный `gh` скачивает архив и манифест SHA-256 выбранного релиза.
+Без авторизованного `gh` скрипт использует `curl` (или `wget`) для публичного
+репозитория. Чтобы закрепить версию, передайте её именно процессу `sh`:
+
+```sh
+gh api -H "Accept: application/vnd.github.raw+json" repos/malinovme/dsh-unica/contents/install.sh | UNICA_VERSION=v0.12.3.3 sh
+```
+
 ```powershell
 # Windows
 irm https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.ps1 | iex

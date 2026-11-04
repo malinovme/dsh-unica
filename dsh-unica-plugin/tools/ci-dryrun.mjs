@@ -59,7 +59,7 @@ if (harnessRoot === undefined) throw new Error('cannot locate the DSH installati
 for (const dir of [HOME_A, HOME_B]) rmSync(dir, { recursive: true, force: true })
 mkdirSync(TMP, { recursive: true })
 
-console.log(`platform under test: ${PLATFORM} (${POSIX ? 'launch.sh branch' : 'direct bootstrap branch'})`)
+console.log(`platform under test: ${PLATFORM} (Node launcher on every host since 0.13)`)
 console.log('--- step: create a stub preset template')
 // The stub must carry the persona row the port rules attach to, with the exact
 // suffix text the installer asserts. Without it the installer refuses by design.

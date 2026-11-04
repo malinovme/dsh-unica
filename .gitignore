@@ -54,3 +54,8 @@ build-report.json
 
 # Probe scripts written by hand while diagnosing the port.
 .probe-*.mjs
+
+# Scratch directories from the 0.13 port verification: the extracted release
+# archive and the throwaway DSH home it was installed into.
+.finalarchive/
+.finalhome/
