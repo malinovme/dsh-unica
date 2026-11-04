@@ -1,19 +1,19 @@
 {
   "schemaVersion": 2,
-  "pluginVersion": "0.13.0",
+  "pluginVersion": "0.15.0-rc.1",
   "upstream": "https://github.com/IngvarConsulting/unica",
-  "tag": "v0.13.0",
+  "tag": "v0.15.0-rc.1",
   "artifacts": {
     "unica": {
-      "version": "0.13.0",
+      "version": "0.15.0-rc.1",
       "role": "core",
       "targets": {
         "darwin-arm64": {
           "asset": {
             "mediaType": "application/gzip",
             "name": "unica-runtime-darwin-arm64.tar.gz",
-            "sha256": "61d8d5ee615539497c83d7aa32afdf20bcdb8499ea1ad2877d91a0a1a3f57130",
-            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.13.0/unica-runtime-darwin-arm64.tar.gz"
+            "sha256": "6126de3d5968788d40f307f025f7d9fd2dba51a0a6aaaea46355829fbc696396",
+            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.15.0-rc.1/unica-runtime-darwin-arm64.tar.gz"
           },
           "install": {
             "strategy": "archive"
@@ -23,12 +23,12 @@
             {
               "executable": true,
               "path": "bin/darwin-arm64/unica",
-              "sha256": "53156736abbc5292e32414af63639ecbb0e4446f53eba7450896805fe7e24a09"
+              "sha256": "3b38b0dd1aec4178fbfb86584673e866167a2ad8bd921e9f5b4670e965efc609"
             },
             {
               "executable": false,
               "path": "third-party/manifest.json",
-              "sha256": "b2b8c8956293c418011a56d9bc83ee240a132e76598424edd4a3bde377a34f26"
+              "sha256": "83bf8a590bf87a57a98be44124967c68dc95307dc17d496b5f0ef13ddbb0a3ee"
             }
           ]
         },
@@ -36,8 +36,8 @@
           "asset": {
             "mediaType": "application/gzip",
             "name": "unica-runtime-linux-x64.tar.gz",
-            "sha256": "1afb5c5abf5f43e890b16f0c411abd3c0244eb3361ad79978c8306efe623ef5d",
-            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.13.0/unica-runtime-linux-x64.tar.gz"
+            "sha256": "7e08ef4ba278346764488a06992cf80db3cdbb37b2debaf9bbcbacd54a8984de",
+            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.15.0-rc.1/unica-runtime-linux-x64.tar.gz"
           },
           "install": {
             "strategy": "archive"
@@ -47,12 +47,12 @@
             {
               "executable": true,
               "path": "bin/linux-x64/unica",
-              "sha256": "2abd6cf31cea3c7be11f2d3864d6b5b5f64936b27946fbf83410da55886afaae"
+              "sha256": "944e5ee21410f38f07f65ac3edb0eee7622dbe2532951db890c89d453f920d27"
             },
             {
               "executable": false,
               "path": "third-party/manifest.json",
-              "sha256": "08b6a13a9900dcebdf6120958b648349014ec39a93354ded4a71258dda5aeb38"
+              "sha256": "2b4f48efce4f6d1575a2a3ddd7e9e06e7ce800ff7676b28761f59ab285a4b6b8"
             }
           ]
         },
@@ -60,8 +60,8 @@
           "asset": {
             "mediaType": "application/gzip",
             "name": "unica-runtime-win-x64.tar.gz",
-            "sha256": "e2150fc41aea1d16fbfff5bce1d99ad2909dd2350a35e0ccc804ae41b2380d03",
-            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.13.0/unica-runtime-win-x64.tar.gz"
+            "sha256": "24bccb461062fca6db4355dabbe6ef400af2c6dc821c09c8b1b5b854e34ec80e",
+            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.15.0-rc.1/unica-runtime-win-x64.tar.gz"
           },
           "install": {
             "strategy": "archive"
@@ -71,12 +71,12 @@
             {
               "executable": true,
               "path": "bin/win-x64/unica.exe",
-              "sha256": "531c614d29c0e2f6207086b911e6b7cf8baa3002ebe60f86fd71e8c684f66867"
+              "sha256": "d846d6906c26bf78494db32f1caf7c4a9ad4fe4c55d45df65bd4082e22b0fd74"
             },
             {
               "executable": false,
               "path": "third-party/manifest.json",
-              "sha256": "4af779537d0ad31842f2bc531ef374946560ead4fef8dc4aca4bfbfea55986b5"
+              "sha256": "b145beb6d06983b1ee0b530758d6c05e8707206e5401201a8c1bf9815bb7fb6c"
             }
           ]
         }
@@ -170,15 +170,15 @@
       }
     },
     "v8-runner": {
-      "version": "0.14.0",
+      "version": "0.15.3",
       "role": "engine",
       "targets": {
         "darwin-arm64": {
           "asset": {
             "mediaType": "application/gzip",
             "name": "v8-runner-macos-aarch64.tar.gz",
-            "sha256": "600dc67b2566ae00d60bc151b0fb419ca0b5406427e799b590600d99bacfc4a5",
-            "url": "https://github.com/IngvarConsulting/v8-runner-rust/releases/download/v0.14.0/v8-runner-macos-aarch64.tar.gz"
+            "sha256": "b03b11c5eea74b3e1cd3c049d5373491098a0de694c4635729cb6a8089b2ddcb",
+            "url": "https://github.com/IngvarConsulting/v8-runner-rust/releases/download/v0.15.3/v8-runner-macos-aarch64.tar.gz"
           },
           "install": {
             "strategy": "archive"
@@ -189,8 +189,8 @@
           "asset": {
             "mediaType": "application/gzip",
             "name": "v8-runner-linux-x86_64-musl.tar.gz",
-            "sha256": "cf9756dc9508371983a81431bc2c458c1f129237169f2ff208dfc70c2d038bab",
-            "url": "https://github.com/IngvarConsulting/v8-runner-rust/releases/download/v0.14.0/v8-runner-linux-x86_64-musl.tar.gz"
+            "sha256": "04d108ac2728dd8924506388edacd2eae5d0da0dfd5e1b26e14eecf4f231ba43",
+            "url": "https://github.com/IngvarConsulting/v8-runner-rust/releases/download/v0.15.3/v8-runner-linux-x86_64-musl.tar.gz"
           },
           "install": {
             "strategy": "archive"
@@ -201,8 +201,8 @@
           "asset": {
             "mediaType": "application/zip",
             "name": "v8-runner-windows-x86_64.zip",
-            "sha256": "67cc9e3d544129b7ff1770cdee4fca74ca03c19d04c01f7c641c0be10279f118",
-            "url": "https://github.com/IngvarConsulting/v8-runner-rust/releases/download/v0.14.0/v8-runner-windows-x86_64.zip"
+            "sha256": "87965362804559b7e02c7478c1da9916b687c10736abb1f964436d554f7f8be1",
+            "url": "https://github.com/IngvarConsulting/v8-runner-rust/releases/download/v0.15.3/v8-runner-windows-x86_64.zip"
           },
           "install": {
             "strategy": "archive"

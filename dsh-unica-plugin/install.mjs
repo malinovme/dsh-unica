@@ -136,7 +136,7 @@ const RUNTIME_MANIFEST = JSON.parse(readFileSync(join(PLUGIN_ROOT, 'runtime-mani
 const SMOKE_TIMEOUT_MS = 120_000
 /** The budget for a cold cache, which must download and verify the runtime first. */
 const COLD_TIMEOUT_MS = 1_800_000
-/** The tool surface of Unica 0.13: eleven tools, not 74 domain actions. */
+/** The tool surface Unica 0.13 introduced and 0.15 keeps: eleven tools, not 74 domain actions. */
 const EXPECTED_TOOLS = 11
 
 /**
