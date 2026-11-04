@@ -57,6 +57,14 @@ jobs:
         working-directory: dsh-unica-plugin
         run: node tools/check-tool-names.mjs
 
+      # The artifact manifest decides what the launcher downloads and where it
+      # lands. A stale one silently degrades every engine-backed call to
+      # `bundled_tool_missing`, so it is generated from the tool lock and must not
+      # drift from it.
+      - name: The artifact manifest matches the tool lock
+        working-directory: dsh-unica-plugin
+        run: node tools/build-runtime-manifest.mjs --check
+
       # The validator imports DSH's own `@deepseek-ai/dsh-agent-preset` and checks
       # the declaration against its shipped schema, so it needs a harness. It is
       # installed into an isolated prefix, never into the repository, and its

@@ -3,57 +3,213 @@
   "pluginVersion": "0.13.0",
   "upstream": "https://github.com/IngvarConsulting/unica",
   "tag": "v0.13.0",
-  "targets": {
-    "win-x64": {
-      "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.13.0/unica-runtime-win-x64.tar.gz",
-      "sha256": "e2150fc41aea1d16fbfff5bce1d99ad2909dd2350a35e0ccc804ae41b2380d03",
-      "entrypoint": "bin/win-x64/unica.exe",
-      "files": [
-        {
-          "executable": true,
-          "path": "bin/win-x64/unica.exe",
-          "sha256": "531c614d29c0e2f6207086b911e6b7cf8baa3002ebe60f86fd71e8c684f66867"
+  "artifacts": {
+    "unica": {
+      "version": "0.13.0",
+      "role": "core",
+      "targets": {
+        "darwin-arm64": {
+          "asset": {
+            "mediaType": "application/gzip",
+            "name": "unica-runtime-darwin-arm64.tar.gz",
+            "sha256": "61d8d5ee615539497c83d7aa32afdf20bcdb8499ea1ad2877d91a0a1a3f57130",
+            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.13.0/unica-runtime-darwin-arm64.tar.gz"
+          },
+          "install": {
+            "strategy": "archive"
+          },
+          "entrypoint": "bin/darwin-arm64/unica",
+          "files": [
+            {
+              "executable": true,
+              "path": "bin/darwin-arm64/unica",
+              "sha256": "53156736abbc5292e32414af63639ecbb0e4446f53eba7450896805fe7e24a09"
+            },
+            {
+              "executable": false,
+              "path": "third-party/manifest.json",
+              "sha256": "b2b8c8956293c418011a56d9bc83ee240a132e76598424edd4a3bde377a34f26"
+            }
+          ]
         },
-        {
-          "executable": false,
-          "path": "third-party/manifest.json",
-          "sha256": "4af779537d0ad31842f2bc531ef374946560ead4fef8dc4aca4bfbfea55986b5"
+        "linux-x64": {
+          "asset": {
+            "mediaType": "application/gzip",
+            "name": "unica-runtime-linux-x64.tar.gz",
+            "sha256": "1afb5c5abf5f43e890b16f0c411abd3c0244eb3361ad79978c8306efe623ef5d",
+            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.13.0/unica-runtime-linux-x64.tar.gz"
+          },
+          "install": {
+            "strategy": "archive"
+          },
+          "entrypoint": "bin/linux-x64/unica",
+          "files": [
+            {
+              "executable": true,
+              "path": "bin/linux-x64/unica",
+              "sha256": "2abd6cf31cea3c7be11f2d3864d6b5b5f64936b27946fbf83410da55886afaae"
+            },
+            {
+              "executable": false,
+              "path": "third-party/manifest.json",
+              "sha256": "08b6a13a9900dcebdf6120958b648349014ec39a93354ded4a71258dda5aeb38"
+            }
+          ]
+        },
+        "win-x64": {
+          "asset": {
+            "mediaType": "application/gzip",
+            "name": "unica-runtime-win-x64.tar.gz",
+            "sha256": "e2150fc41aea1d16fbfff5bce1d99ad2909dd2350a35e0ccc804ae41b2380d03",
+            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.13.0/unica-runtime-win-x64.tar.gz"
+          },
+          "install": {
+            "strategy": "archive"
+          },
+          "entrypoint": "bin/win-x64/unica.exe",
+          "files": [
+            {
+              "executable": true,
+              "path": "bin/win-x64/unica.exe",
+              "sha256": "531c614d29c0e2f6207086b911e6b7cf8baa3002ebe60f86fd71e8c684f66867"
+            },
+            {
+              "executable": false,
+              "path": "third-party/manifest.json",
+              "sha256": "4af779537d0ad31842f2bc531ef374946560ead4fef8dc4aca4bfbfea55986b5"
+            }
+          ]
         }
-      ]
+      }
     },
-    "darwin-arm64": {
-      "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.13.0/unica-runtime-darwin-arm64.tar.gz",
-      "sha256": "61d8d5ee615539497c83d7aa32afdf20bcdb8499ea1ad2877d91a0a1a3f57130",
-      "entrypoint": "bin/darwin-arm64/unica",
-      "files": [
-        {
-          "executable": true,
-          "path": "bin/darwin-arm64/unica",
-          "sha256": "53156736abbc5292e32414af63639ecbb0e4446f53eba7450896805fe7e24a09"
+    "bsl-analyzer": {
+      "version": "0.2.86",
+      "role": "engine",
+      "targets": {
+        "darwin-arm64": {
+          "asset": {
+            "mediaType": "application/octet-stream",
+            "name": "bsl-analyzer-darwin-arm64",
+            "sha256": "dcca384a1f97761f017933235156a57696936f23992690cd0b92ab83a6e5de29",
+            "url": "https://github.com/IngvarConsulting/unica-toolchain/releases/download/bsl-analyzer-v0.2.86-build.1/bsl-analyzer-darwin-arm64"
+          },
+          "install": {
+            "strategy": "file",
+            "as": "bsl-analyzer"
+          },
+          "entrypoint": "bsl-analyzer"
         },
-        {
-          "executable": false,
-          "path": "third-party/manifest.json",
-          "sha256": "b2b8c8956293c418011a56d9bc83ee240a132e76598424edd4a3bde377a34f26"
+        "linux-x64": {
+          "asset": {
+            "mediaType": "application/octet-stream",
+            "name": "bsl-analyzer-linux-x64",
+            "sha256": "e0131a2c5f281e3ad1c5d5167fe67edad48e245a7a1e41e7efb9054b500335e6",
+            "url": "https://github.com/IngvarConsulting/unica-toolchain/releases/download/bsl-analyzer-v0.2.86-build.1/bsl-analyzer-linux-x64"
+          },
+          "install": {
+            "strategy": "file",
+            "as": "bsl-analyzer"
+          },
+          "entrypoint": "bsl-analyzer"
+        },
+        "win-x64": {
+          "asset": {
+            "mediaType": "application/octet-stream",
+            "name": "bsl-analyzer-win-x64.exe",
+            "sha256": "3736453d18dd7ea12634b6a78839eed1fd3a8d821819b752b39f51afd91869d9",
+            "url": "https://github.com/IngvarConsulting/unica-toolchain/releases/download/bsl-analyzer-v0.2.86-build.1/bsl-analyzer-win-x64.exe"
+          },
+          "install": {
+            "strategy": "file",
+            "as": "bsl-analyzer.exe"
+          },
+          "entrypoint": "bsl-analyzer.exe"
         }
-      ]
+      }
     },
-    "linux-x64": {
-      "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.13.0/unica-runtime-linux-x64.tar.gz",
-      "sha256": "1afb5c5abf5f43e890b16f0c411abd3c0244eb3361ad79978c8306efe623ef5d",
-      "entrypoint": "bin/linux-x64/unica",
-      "files": [
-        {
-          "executable": true,
-          "path": "bin/linux-x64/unica",
-          "sha256": "2abd6cf31cea3c7be11f2d3864d6b5b5f64936b27946fbf83410da55886afaae"
+    "rlm-tools-bsl": {
+      "version": "1.42.0",
+      "role": "engine",
+      "targets": {
+        "darwin-arm64": {
+          "asset": {
+            "mediaType": "application/gzip",
+            "name": "rlm-tools-bsl-darwin-arm64.tar.gz",
+            "sha256": "412cbe92aa51f6823e9d2dea43d8ace5717f0f3ad5ee1c53d47ef2ce940f5cff",
+            "url": "https://github.com/IngvarConsulting/unica-toolchain/releases/download/rlm-tools-bsl-v1.42.0-build.1/rlm-tools-bsl-darwin-arm64.tar.gz"
+          },
+          "install": {
+            "strategy": "archive"
+          },
+          "entrypoint": "payload/rlm-bsl-mcp"
         },
-        {
-          "executable": false,
-          "path": "third-party/manifest.json",
-          "sha256": "08b6a13a9900dcebdf6120958b648349014ec39a93354ded4a71258dda5aeb38"
+        "linux-x64": {
+          "asset": {
+            "mediaType": "application/gzip",
+            "name": "rlm-tools-bsl-linux-x64.tar.gz",
+            "sha256": "43ff374feea19f7d2cd7a8071810ffab1be67500b69857663f2645bca2f4fea9",
+            "url": "https://github.com/IngvarConsulting/unica-toolchain/releases/download/rlm-tools-bsl-v1.42.0-build.1/rlm-tools-bsl-linux-x64.tar.gz"
+          },
+          "install": {
+            "strategy": "archive"
+          },
+          "entrypoint": "payload/rlm-bsl-mcp"
+        },
+        "win-x64": {
+          "asset": {
+            "mediaType": "application/gzip",
+            "name": "rlm-tools-bsl-win-x64.tar.gz",
+            "sha256": "1c7e19dc53b2d924eeef3b47ac53ea90c76bd106a8fe4594f7c9c58869088471",
+            "url": "https://github.com/IngvarConsulting/unica-toolchain/releases/download/rlm-tools-bsl-v1.42.0-build.1/rlm-tools-bsl-win-x64.tar.gz"
+          },
+          "install": {
+            "strategy": "archive"
+          },
+          "entrypoint": "payload/rlm-bsl-mcp.exe"
         }
-      ]
+      }
+    },
+    "v8-runner": {
+      "version": "0.14.0",
+      "role": "engine",
+      "targets": {
+        "darwin-arm64": {
+          "asset": {
+            "mediaType": "application/gzip",
+            "name": "v8-runner-macos-aarch64.tar.gz",
+            "sha256": "600dc67b2566ae00d60bc151b0fb419ca0b5406427e799b590600d99bacfc4a5",
+            "url": "https://github.com/IngvarConsulting/v8-runner-rust/releases/download/v0.14.0/v8-runner-macos-aarch64.tar.gz"
+          },
+          "install": {
+            "strategy": "archive"
+          },
+          "entrypoint": "v8-runner-macos-aarch64/v8-runner"
+        },
+        "linux-x64": {
+          "asset": {
+            "mediaType": "application/gzip",
+            "name": "v8-runner-linux-x86_64-musl.tar.gz",
+            "sha256": "cf9756dc9508371983a81431bc2c458c1f129237169f2ff208dfc70c2d038bab",
+            "url": "https://github.com/IngvarConsulting/v8-runner-rust/releases/download/v0.14.0/v8-runner-linux-x86_64-musl.tar.gz"
+          },
+          "install": {
+            "strategy": "archive"
+          },
+          "entrypoint": "v8-runner-linux-x86_64-musl/v8-runner"
+        },
+        "win-x64": {
+          "asset": {
+            "mediaType": "application/zip",
+            "name": "v8-runner-windows-x86_64.zip",
+            "sha256": "67cc9e3d544129b7ff1770cdee4fca74ca03c19d04c01f7c641c0be10279f118",
+            "url": "https://github.com/IngvarConsulting/v8-runner-rust/releases/download/v0.14.0/v8-runner-windows-x86_64.zip"
+          },
+          "install": {
+            "strategy": "archive"
+          },
+          "entrypoint": "v8-runner-windows-x86_64/v8-runner.exe"
+        }
+      }
     }
   }
 }

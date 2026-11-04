@@ -58,8 +58,17 @@ const manifestPath = join(PLUGIN_ROOT, 'runtime-manifest.json')
 if (!existsSync(manifestPath)) die(`no runtime manifest at ${manifestPath}`)
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
 const wanted = target()
-const descriptor = manifest.targets?.[wanted]
-if (descriptor === undefined) die(`the runtime manifest has no entry for ${wanted}`)
+
+// Since 0.13 the manifest describes *artifacts*, not one runtime archive: the
+// core server plus the engines Unica borrows (`bsl-analyzer`, `rlm-tools-bsl`,
+// `v8-runner`). Unica resolves an engine from the artifact cache, never from its
+// own bundle, so the layout below is the whole contract: get it wrong and every
+// engine-backed call dies as `bundled_tool_missing`, with a message that points
+// at a directory nothing is supposed to exist in.
+const artifacts = manifest.artifacts
+if (artifacts === null || typeof artifacts !== 'object') {
+  die('runtime-manifest.json carries no `artifacts` block: run `node tools/build-runtime-manifest.mjs`')
+}
 
 // The cache lives where the profile says (the installer pins it), falling back to
 // the DSH home so a hand-run of this script behaves like an installed one.
@@ -71,9 +80,15 @@ const cacheRoot =
 // start, and the default it picks belongs to another host's layout.
 process.env.UNICA_PROVIDER_STATE_DIR ??= join(dirname(cacheRoot), 'provider-state')
 
-const versionDir = join(cacheRoot, manifest.pluginVersion, wanted)
-const marker = join(versionDir, '.ready.json')
-const entrypoint = join(versionDir, descriptor.entrypoint)
+/** Where one artifact for this target lives, plus its installed marker. */
+function artifactAt(name) {
+  const artifact = artifacts[name]
+  if (artifact === undefined) die(`the runtime manifest has no artifact ${name}`)
+  const descriptor = artifact.targets?.[wanted]
+  if (descriptor === undefined) die(`artifact ${name} has no entry for ${wanted}`)
+  const dir = join(cacheRoot, name, `${artifact.version}--${descriptor.asset.sha256}`, wanted)
+  return { artifact, descriptor, dir, marker: join(dir, '.ready.json') }
+}
 
 /** Streams a URL to a file, returning its SHA-256. */
 async function download(url, destination) {
@@ -97,49 +112,115 @@ async function hashFile(path) {
   return hash.digest('hex')
 }
 
-async function ensureRuntime() {
-  if (existsSync(marker) && existsSync(entrypoint)) return entrypoint
+/**
+ * Removes scratch directories a dead launcher left behind. A killed install (DSH
+ * restart, Ctrl-C) cannot clean up after itself, and the leftovers are the size of
+ * the artifact, so they must not accumulate in the cache.
+ */
+async function sweepAbandonedScratch(name) {
+  const prefix = `.${name}-`
+  let entries
+  try {
+    entries = await readdir(cacheRoot)
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue
+    // The asset download carries `<pid>-<asset name>`; the scratch dir `<pid>`.
+    const pid = Number.parseInt(entry.slice(prefix.length).split('-')[0], 10)
+    if (!Number.isInteger(pid) || pid === process.pid) continue
+    let alive = true
+    try {
+      process.kill(pid, 0)
+    } catch (error) {
+      alive = error.code === 'EPERM'
+    }
+    if (alive) continue
+    await rm(join(cacheRoot, entry), { recursive: true, force: true }).catch(() => {})
+  }
+}
 
-  // Both paths carry the pid. Several servers can start at once — DSH restarts
-  // are exactly that moment — and a shared archive name had them writing the same
-  // file, so one process unlinked the bytes another was still hashing or unpacking
-  // and a healthy install died with a checksum or tar error.
-  const archive = join(cacheRoot, `.unica-${wanted}-${process.pid}.tar.gz`)
-  const scratch = join(cacheRoot, `.unica-${wanted}-${process.pid}`)
+/** Unpacks an archive into `dir`, using whichever tool the host actually has. */
+function unpack(archivePath, dir, assetName) {
+  const lower = assetName.toLowerCase()
+  const zip = lower.endsWith('.zip')
+  const attempts = zip
+    ? process.platform === 'win32'
+      // bsdtar ships with Windows 10 1803 and reads zip; unzip may be absent.
+      ? [['tar', ['-xf', archivePath, '-C', dir]], ['unzip', ['-q', archivePath, '-d', dir]]]
+      : [['unzip', ['-q', archivePath, '-d', dir]], ['tar', ['-xf', archivePath, '-C', dir]]]
+    : [['tar', ['-xzf', archivePath, '-C', dir]]]
+
+  const failures = []
+  for (const [command, args] of attempts) {
+    const result = spawnSync(command, args, { encoding: 'utf8' })
+    if (result.status === 0) return
+    const detail = result.error?.message || (result.stderr || '').trim() || 'exit ' + result.status
+    failures.push(command + ': ' + detail)
+  }
+  throw new Error(`cannot unpack ${assetName} (${failures.join('; ')})`)
+}
+
+/**
+ * Installs one artifact into its cache directory, verifying the asset first.
+ * The directory only appears under its final name once it is complete, so a
+ * crash leaves a scratch directory behind rather than a cache that looks ready.
+ * Throws instead of exiting: engine delivery runs in the background, where a
+ * failure must not take the MCP server down.
+ */
+async function installArtifact(name) {
+  const entry = artifactAt(name)
+  if (existsSync(entry.marker)) return entry
+
+  const assetPath = join(cacheRoot, `.${name}-${process.pid}-${entry.descriptor.asset.name}`)
+  const scratch = join(cacheRoot, `.${name}-${process.pid}`)
   await mkdir(cacheRoot, { recursive: true })
+  await sweepAbandonedScratch(name)
   await rm(scratch, { recursive: true, force: true })
   await mkdir(scratch, { recursive: true })
 
-  console.error(`unica launcher: fetching ${manifest.pluginVersion} runtime for ${wanted} (first run)`)
+  console.error(`unica launcher: fetching ${name} ${entry.artifact.version} for ${wanted}`)
   let digest
   try {
-    digest = await download(descriptor.url, archive)
+    digest = await download(entry.descriptor.asset.url, assetPath)
   } catch (error) {
     await rm(scratch, { recursive: true, force: true })
-    await rm(archive, { force: true })
-    die(`cannot download ${descriptor.url}: ${error.message}. The first start needs network; a proxy or a blocked host shows up here.`)
+    await rm(assetPath, { force: true })
+    throw new Error(`cannot download ${entry.descriptor.asset.url}: ${error.message}. First start needs network; a proxy or a blocked host shows up here.`)
   }
-  if (digest !== descriptor.sha256) {
+  if (digest !== entry.descriptor.asset.sha256) {
     await rm(scratch, { recursive: true, force: true })
-    await rm(archive, { force: true })
-    die(`runtime archive checksum mismatch: descriptor says ${descriptor.sha256}, got ${digest}`)
+    await rm(assetPath, { force: true })
+    throw new Error(`artifact ${name} checksum mismatch: manifest says ${entry.descriptor.asset.sha256}, got ${digest}`)
   }
 
-  // tar ships with Windows 10 1803 and every POSIX host the port supports.
-  const unpacked = spawnSync('tar', ['-xzf', archive, '-C', scratch], { encoding: 'utf8' })
-  if (unpacked.status !== 0) {
-    await rm(scratch, { recursive: true, force: true })
-    die(`cannot unpack the runtime archive: ${unpacked.stderr || unpacked.status}`)
-  }
-  await rm(archive, { force: true })
-
-  for (const file of descriptor.files ?? []) {
-    const path = join(scratch, file.path)
-    if (!existsSync(path)) die(`the runtime archive is missing ${file.path}`)
-    const actual = await hashFile(path)
-    if (file.sha256 !== undefined && actual !== file.sha256) {
+  const install = entry.descriptor.install ?? { strategy: 'archive' }
+  if (install.strategy === 'file') {
+    const destination = join(scratch, install.as ?? entry.descriptor.asset.name)
+    await mkdir(dirname(destination), { recursive: true })
+    await rename(assetPath, destination)
+    await chmod(destination, 0o755).catch(() => {})
+  } else {
+    try {
+      unpack(assetPath, scratch, entry.descriptor.asset.name)
+    } catch (error) {
       await rm(scratch, { recursive: true, force: true })
-      die(`runtime file checksum mismatch for ${file.path}`)
+      await rm(assetPath, { force: true })
+      throw error
+    }
+    await rm(assetPath, { force: true })
+  }
+
+  for (const file of entry.descriptor.files ?? []) {
+    const path = join(scratch, file.path)
+    if (!existsSync(path)) {
+      await rm(scratch, { recursive: true, force: true })
+      throw new Error(`artifact ${name} is missing ${file.path}`)
+    }
+    if (file.sha256 !== undefined && (await hashFile(path)) !== file.sha256) {
+      await rm(scratch, { recursive: true, force: true })
+      throw new Error(`artifact ${name} file checksum mismatch for ${file.path}`)
     }
     // tar preserves the executable bit, but an archive built on Windows may not.
     if (file.executable === true) await chmod(path, 0o755).catch(() => {})
@@ -147,21 +228,47 @@ async function ensureRuntime() {
 
   await writeFile(
     join(scratch, '.ready.json'),
-    `${JSON.stringify({ pluginVersion: manifest.pluginVersion, target: wanted, sha256: descriptor.sha256 }, null, 2)}\n`,
+    `${JSON.stringify({ artifact: name, version: entry.artifact.version, target: wanted, assetSha256: entry.descriptor.asset.sha256 }, null, 2)}\n`,
     'utf8',
   )
-  // Another process may have published the same runtime while this one was
+  // Another process may have published the same artifact while this one was
   // downloading. Its copy is just as verified, and replacing a directory a live
   // server is running from is worse than keeping it, so defer to it.
-  if (existsSync(marker) && existsSync(entrypoint)) {
+  if (existsSync(entry.marker)) {
     await rm(scratch, { recursive: true, force: true })
-    return entrypoint
+    return entry
   }
   // The rename is what makes the cache appear ready only once it *is* ready.
-  await rm(versionDir, { recursive: true, force: true })
-  await mkdir(dirname(versionDir), { recursive: true })
-  await rename(scratch, versionDir)
-  return entrypoint
+  await rm(entry.dir, { recursive: true, force: true })
+  await mkdir(dirname(entry.dir), { recursive: true })
+  try {
+    await rename(scratch, entry.dir)
+  } catch (error) {
+    await rm(scratch, { recursive: true, force: true })
+    if (!existsSync(entry.marker)) throw error
+  }
+  return entry
+}
+
+/** Engines the runtime expects but this cache does not have yet, cheapest first. */
+function missingEngines() {
+  const order = ['v8-runner', 'bsl-analyzer', 'rlm-tools-bsl']
+  return Object.keys(artifacts)
+    .filter((name) => name !== 'unica' && !existsSync(artifactAt(name).marker))
+    .sort((left, right) => order.indexOf(left) - order.indexOf(right))
+}
+
+async function deliverEngines(names) {
+  for (const name of names) {
+    try {
+      await installArtifact(name)
+      console.error(`unica launcher: ${name} delivered`)
+    } catch (error) {
+      // A missing engine degrades one capability, it does not stop the server:
+      // every engine-backed call answers `provider_unavailable` on its own.
+      console.error(`unica launcher: ${name} delivery failed: ${error.message}`)
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -266,17 +373,36 @@ const selfTestArgv = process.env.UNICA_LAUNCH_SELFTEST_COMMAND
 const selfTest = selfTestArgv === undefined || selfTestArgv === '' ? null : JSON.parse(selfTestArgv)
 const selfTesting = Array.isArray(selfTest) && selfTest.length > 0
 
-// A self-test replaces the runtime entirely, so it must not resolve or download
-// one: tools/verify-bridge.mjs points this at a fake server.
-const executable = selfTesting ? selfTest[0] : await ensureRuntime()
-if (!selfTesting && !existsSync(executable)) die(`the runtime entrypoint is missing after install: ${executable}`)
+let command
+let commandArgs = []
+if (selfTesting) {
+  // A self-test replaces the runtime entirely, so it must neither resolve nor
+  // download one: tools/verify-bridge.mjs points this at a fake server.
+  command = selfTest[0]
+  commandArgs = selfTest.slice(1)
+} else {
+  const coreEntry = await installArtifact('unica').catch((error) => die(error.message))
+  command = join(coreEntry.dir, coreEntry.descriptor.entrypoint)
+  if (!existsSync(command)) die(`the installed runtime is missing ${command}`)
 
-const command = selfTesting ? selfTest[0] : executable
-const commandArgs = selfTesting ? selfTest.slice(1) : []
+  // `off` keeps the cache untouched, `eager` blocks the handover until every engine
+  // is in place, and the default starts the server at once and delivers behind it:
+  // engines appear on the next call that needs them, and a call that needs one
+  // before it lands answers `bundled_tool_missing`, exactly as without them.
+  const delivery = process.env.UNICA_ARTIFACT_DELIVERY ?? 'background'
+  const pending = delivery === 'off' ? [] : missingEngines()
+  if (delivery === 'eager' && pending.length > 0) await deliverEngines(pending)
+  else if (delivery === 'background' && pending.length > 0) void deliverEngines(pending)
+}
 
-const child = spawn(command, commandArgs, { stdio: TEXT_FALLBACK ? ['pipe', 'pipe', 'inherit'] : 'inherit' })
+// The runtime finds its engines through this cache root, not through its own
+// directory: without the variable every engine-backed call fails as if the engine
+// were missing even when it is installed right next door.
+const childEnv = { ...process.env, UNICA_ARTIFACT_CACHE: cacheRoot }
+
+const child = spawn(command, commandArgs, { stdio: TEXT_FALLBACK ? ['pipe', 'pipe', 'inherit'] : 'inherit', env: childEnv })
 if (TEXT_FALLBACK) relay(child)
-child.on('error', (error) => die(`cannot start ${executable}: ${error.message}`))
+child.on('error', (error) => die(`cannot start ${command}: ${error.message}`))
 child.on('exit', (code, signal) => {
   if (signal !== null) return process.kill(process.pid, signal)
   // Drain the last rewritten lines before leaving: a piped stdout is flushed

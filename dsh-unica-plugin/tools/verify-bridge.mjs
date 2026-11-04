@@ -5,6 +5,7 @@
 //   node tools/verify-bridge.mjs          # fake server conformance + live probe
 //   node tools/verify-bridge.mjs --fake   # fake server only (no runtime needed)
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -240,6 +241,129 @@ check(
   `child cwd=${pinnedCwd}`,
 )
 await rm(pinDir, { recursive: true, force: true }).catch(() => {})
+
+// --- artifact delivery guards -------------------------------------------------
+// A cache that looks ready but is not is worse than an empty one, so both failure
+// paths must refuse loudly and leave nothing behind: a checksum that disagrees
+// with the manifest, and an asset that is not there at all.
+console.log('\nartifact delivery:')
+const hostTarget =
+  process.platform === 'win32' ? 'win-x64' : process.platform === 'darwin' ? 'darwin-arm64' : 'linux-x64'
+
+/** Runs the launcher against a throwaway plugin root and returns its stderr. */
+async function launchAgainst(manifestValue, cacheDir) {
+  const root = await mkdtemp(join(tmpdir(), 'unica-manifest-'))
+  await writeFile(join(root, 'runtime-manifest.json'), `${JSON.stringify(manifestValue, null, 2)}\n`, 'utf8')
+  const child = spawn(process.execPath, [launcher, root], {
+    stdio: ['ignore', 'ignore', 'pipe'],
+    env: { ...process.env, UNICA_RUNTIME_CACHE_DIR: cacheDir, UNICA_PROVIDER_STATE_DIR: join(cacheDir, 'state') },
+  })
+  let stderr = ''
+  child.stderr.setEncoding('utf8')
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk
+  })
+  const code = await new Promise((settle) => {
+    const timer = setTimeout(() => {
+      child.kill()
+      settle('timeout')
+    }, 60_000)
+    child.on('exit', (value) => {
+      clearTimeout(timer)
+      settle(value)
+    })
+  })
+  await rm(root, { recursive: true, force: true }).catch(() => {})
+  return { code, stderr }
+}
+
+const http = await import('node:http')
+const served = Buffer.from('not the artifact you signed for')
+const server = http.createServer((request, response) => {
+  if (request.url === '/payload.bin') {
+    response.writeHead(200, { 'content-type': 'application/octet-stream' })
+    response.end(served)
+    return
+  }
+  response.writeHead(404)
+  response.end('missing')
+})
+await new Promise((settle) => server.listen(0, '127.0.0.1', settle))
+const port = server.address().port
+
+function manifestFor(url, sha256) {
+  return {
+    schemaVersion: 2,
+    pluginVersion: '0.0.0-test',
+    artifacts: {
+      unica: {
+        version: '0.0.0',
+        role: 'core',
+        targets: {
+          [hostTarget]: {
+            asset: { mediaType: 'application/octet-stream', name: 'payload.bin', sha256, url },
+            install: { strategy: 'file', as: 'payload.bin' },
+            entrypoint: 'payload.bin',
+          },
+        },
+      },
+    },
+  }
+}
+
+const wrongSumCache = await mkdtemp(join(tmpdir(), 'unica-cache-bad-'))
+const wrongSum = await launchAgainst(manifestFor(`http://127.0.0.1:${port}/payload.bin`, '0'.repeat(64)), wrongSumCache)
+check(
+  'a checksum mismatch refuses and installs nothing',
+  wrongSum.code !== 0 && wrongSum.stderr.includes('checksum mismatch') && !existsSync(join(wrongSumCache, 'unica')),
+  wrongSum.stderr.trim().split('\n').pop() ?? '',
+)
+await rm(wrongSumCache, { recursive: true, force: true }).catch(() => {})
+
+const missingCache = await mkdtemp(join(tmpdir(), 'unica-cache-404-'))
+const missing = await launchAgainst(manifestFor(`http://127.0.0.1:${port}/absent.bin`, '0'.repeat(64)), missingCache)
+check(
+  'a missing asset refuses with the URL in the message',
+  missing.code !== 0 && missing.stderr.includes('cannot download') && !existsSync(join(missingCache, 'unica')),
+  missing.stderr.trim().split('\n').pop() ?? '',
+)
+await rm(missingCache, { recursive: true, force: true }).catch(() => {})
+server.close()
+
+// Engines are only exercised when a cache with delivered artifacts is named: the
+// default run must stay offline after the first core install.
+if (process.env.UNICA_TEST_ENGINES === '1') {
+  console.log('\nengines (live):')
+  const engineRun = await converse({
+    env: {
+      UNICA_RUNTIME_CACHE_DIR: resolve(runtimeCache),
+      UNICA_PROVIDER_STATE_DIR: resolve(stateDir),
+      UNICA_ARTIFACT_DELIVERY: 'off',
+      UNICA_WORKSPACE_ROOT: process.env.UNICA_TEST_WORKSPACE ?? '',
+      UNICA_BRIDGE_TEXT_FALLBACK: '1',
+    },
+    requests: [
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'verify-bridge', version: '0' } },
+      },
+      { jsonrpc: '2.0', method: 'notifications/initialized', params: {} },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'unica.search', arguments: { query: process.env.UNICA_TEST_SYMBOL ?? 'Удвоить', corpus: 'text', role: 'symbol' } } },
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'unica.run', arguments: { op: 'infobase.create', args: {}, dryRun: true } } },
+    ],
+    timeoutMs: 600_000,
+  })
+  const engineText = engineRun.find((m) => m.id === 2)?.result?.content?.[0]?.text ?? ''
+  check('the artifact cache makes bsl-analyzer answer', engineText.includes('"ok": true'), engineText.slice(0, 160))
+  const runnerText = engineRun.find((m) => m.id === 3)?.result?.content?.[0]?.text ?? ''
+  check(
+    'the artifact cache makes v8-runner answer',
+    runnerText.includes('"ok": true') || runnerText.includes('infobase'),
+    runnerText.slice(0, 160),
+  )
+}
 
 await rm(scratch, { recursive: true, force: true }).catch(() => {})
 console.log(failures.length === 0 ? '\nall checks: PASS' : `\nall checks: FAIL (${failures.length})`)
