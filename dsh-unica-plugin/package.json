@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-unica",
-  "version": "0.13.0",
+  "version": "0.13.0.1",
   "private": true,
   "description": "Unica for DeepSeek Harness: 1C:Enterprise development skills plus the unica MCP server, exposed as DSH skills and MCP tools.",
   "license": "LGPL-3.0-or-later",
@@ -24,7 +24,7 @@
   "unica": {
     "upstream": "https://github.com/IngvarConsulting/unica",
     "upstreamVersion": "0.13.0",
-    "portRevision": "1",
+    "portRevision": "2",
     "mcpServerName": "unica",
     "mcpTools": 11,
     "skills": 55,

@@ -100,15 +100,27 @@ async function hashFile(path) {
 async function ensureRuntime() {
   if (existsSync(marker) && existsSync(entrypoint)) return entrypoint
 
-  const archive = join(cacheRoot, `.unica-${wanted}.tar.gz`)
+  // Both paths carry the pid. Several servers can start at once — DSH restarts
+  // are exactly that moment — and a shared archive name had them writing the same
+  // file, so one process unlinked the bytes another was still hashing or unpacking
+  // and a healthy install died with a checksum or tar error.
+  const archive = join(cacheRoot, `.unica-${wanted}-${process.pid}.tar.gz`)
   const scratch = join(cacheRoot, `.unica-${wanted}-${process.pid}`)
   await mkdir(cacheRoot, { recursive: true })
   await rm(scratch, { recursive: true, force: true })
   await mkdir(scratch, { recursive: true })
 
   console.error(`unica launcher: fetching ${manifest.pluginVersion} runtime for ${wanted} (first run)`)
-  const digest = await download(descriptor.url, archive)
+  let digest
+  try {
+    digest = await download(descriptor.url, archive)
+  } catch (error) {
+    await rm(scratch, { recursive: true, force: true })
+    await rm(archive, { force: true })
+    die(`cannot download ${descriptor.url}: ${error.message}. The first start needs network; a proxy or a blocked host shows up here.`)
+  }
   if (digest !== descriptor.sha256) {
+    await rm(scratch, { recursive: true, force: true })
     await rm(archive, { force: true })
     die(`runtime archive checksum mismatch: descriptor says ${descriptor.sha256}, got ${digest}`)
   }
@@ -138,6 +150,13 @@ async function ensureRuntime() {
     `${JSON.stringify({ pluginVersion: manifest.pluginVersion, target: wanted, sha256: descriptor.sha256 }, null, 2)}\n`,
     'utf8',
   )
+  // Another process may have published the same runtime while this one was
+  // downloading. Its copy is just as verified, and replacing a directory a live
+  // server is running from is worse than keeping it, so defer to it.
+  if (existsSync(marker) && existsSync(entrypoint)) {
+    await rm(scratch, { recursive: true, force: true })
+    return entrypoint
+  }
   // The rename is what makes the cache appear ready only once it *is* ready.
   await rm(versionDir, { recursive: true, force: true })
   await mkdir(dirname(versionDir), { recursive: true })
