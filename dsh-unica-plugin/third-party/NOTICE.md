@@ -1,0 +1,29 @@
+# Third-Party Notices
+
+Pinned third-party tool versions, repositories, commits, licenses, and target
+asset names are declared once in `third-party/tools.lock.json`.
+
+Official marketplace archives generate `third-party/manifest.json` from that
+lock file and CI-built binary bundles. The repository source tree does not
+commit generated tool binaries.
+
+## bsl-analyzer
+
+- Included notices: `third-party/licenses/bsl-analyzer/`
+
+## v8-runner
+
+- Included license: `third-party/licenses/v8-runner/LICENSE`
+- See `third-party/tools.lock.json` for the pinned repository, version, tag,
+  commit, AGPL-3.0-only license field, and target assets.
+- The publisher's release archive is delivered unchanged: next to the binary it
+  carries its own `LICENSE`, `FORK_NOTICE.md`, `README.md`, and `examples/`.
+
+## rlm-tools-bsl
+
+- Included notices: `third-party/licenses/rlm-tools-bsl/`
+
+Record tool version changes in `third-party/tools.lock.json`. Before publishing
+a plugin with an updated lock, bump the plugin version in every package contract
+location as described in the release runbook. The release workflow then
+regenerates the manifest and archives.
