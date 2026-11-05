@@ -166,11 +166,49 @@ Pending: Не найдена процедура или функция для в�
 Чтобы вернуть содержательный тест, нужны `features/step_definitions/*.bsl` с
 реализацией наших шагов (или переписать фичу на встроенные шаги Vanessa).
 
+## `unica.check` по BSL: сначала казалось дефектом, оказалось нет
+
+Первый вызов `unica.check` на модуле после старта сервера вернул:
+
+```
+BSL analysis did not complete, so the module is unproven:
+bsl-analyzer: diagnostic provider did not produce a result for an unclassified reason.
+Repeat the call; if the problem persists, report this reason.
+```
+
+Отсюда я сначала сделал вывод «апстрим сломан». Это неверно. Повторный вызов дал
+настоящую диагностику:
+
+```
+validators: ["bsl"], diagnosticCount: 1
+code: CommonModuleInvalidType, severity: error
+message: Общий модуль должен быть одного из типов: Server, ServerCall, Client, ClientServer
+```
+
+То есть валидатор реализован и работает; первый вызов — это состояние прогрева
+индекса (то же самое, что `unica.search` с `detailCode: "buildingIndex"`), и само
+сообщение предлагает повторить вызов.
+
+**И диагностика верная.** По стандарту 1С серверный общий модуль — это набор
+`Server + ExternalConnection + Client (обычное приложение)`, а не один `Server`.
+Наш модуль создавался через `unica.apply` с одним `Server: true`, платформа такое
+съела при импорте, а `bsl-analyzer` поймал нарушение стандарта.
+
+Исправлено тем же инструментом:
+
+```json
+{ "at": "main:CommonModule.ЮТ_Тесты", "ops": [
+  { "op": "props.set", "args": { "values": {
+      "Server": true, "ExternalConnection": true, "ClientOrdinaryApplication": true } } } ] }
+```
+
+После публикации: `unica.check` → `status: "passed"`, `validators: ["bsl"]`,
+`diagnosticCount: 0`.
+
 ## Что осталось по сценарию
 
 - YaXUnit: запуск тестов на поверхности 0.13/0.15 не опубликован; авторинг
   тестовой процедуры и её поиск проверены ранее.
-- `unica.check` по BSL-модулю по-прежнему отказывает — это известный апстримный
-  дефект (в 0.15 сообщение стало информативнее).
+
 
 

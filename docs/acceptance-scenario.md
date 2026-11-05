@@ -226,9 +226,13 @@ unica.diff { left: "main:Catalog.Номенклатура", right: "main:Catalog
 
 Критерий: `unica.view` по модулю тестов показывает метод в ветке `Method`; для
 поиска по тестовому коду работает `unica.search {role:"symbol"}` (проверено,
-§10). `unica.check` по модулю пока возвращает `provider_unavailable` — это
-апстримная щель в диагностике, а не отсутствие движка: тот же провайдер отвечает
-на символьный поиск.
+§10). `unica.check` по модулю работает: первый вызов после старта сервера может
+вернуть «BSL analysis did not complete … Repeat the call» (прогрев индекса), а
+повторный отдаёт настоящие диагностики `validators: ["bsl"]`. Написанный по
+сценарию модуль получил `CommonModuleInvalidType` — серверному общему модулю
+нужны `Server + ExternalConnection + Client (обычное)`; после `props.set`
+проверка стала `passed` (подробности — в
+[platform-findings.md](platform-findings.md)).
 
 **6.4 Запуск (вне поверхности).** Варианты на будущее: `unica.run launch` с
 `execute` внешней обработкой-раннером (`waitForExit`, `waitTimeoutMs`) —
@@ -309,19 +313,28 @@ Vanessa) — `BLOCKED-BY-TOOLCHAIN` до реализации доставки `
 |---|---|---|
 | `unica.run {op:"infobase.create", dryRun:true}` | `bundled_tool_missing: v8-runner` | **`ok`, план: `action:"create"`, `requiresPlatform:true`** |
 | `unica.search {query:"Удвоить", role:"symbol"}` | `provider_unavailable` | **`ok`: `CommonModule.Тестовый.Module`, строки 1–7, `indexFreshness`, `[L] semantic disabled`** |
-| `unica.check` на модуле | `BSL analysis did not complete` | **всё ещё `BSL analysis did not complete`** |
+| `unica.check` на модуле | `BSL analysis did not complete` | `BSL analysis did not complete` (в 0.13) |
 
-**Что осталось сломанным (апстрим, не порт).** `check` на модуле так и не зеленеет:
-провайдер найден и работает (символьный поиск идёт через него же, процесс
-`bsl-analyzer` жив), но диагностика возвращает generic `provider_unavailable` без
-`detailCode`, в отличие от поиска, который в той же ситуации честно отвечает
-`dependency_pending` / `buildingIndex`.
+**Про `check` на модуле: сначала показалось, что сломано.** В 0.13 первый вызов
+отдавал generic `provider_unavailable` без `detailCode`, и это выглядело как
+неотданный фикс (#1338/#1365). На 0.15.0-rc.1 сообщение стало другим —
+`bsl-analyzer: diagnostic provider did not produce a result … Repeat the call
+… report this reason`, — а **повторный вызов вернул настоящую диагностику**:
 
-Это **не новый дефект**, а неотданный фикс: v0.13.0 опубликован 2026-10-09
-(`source.commit ee118d78`), а PR #1365 «fix(check): называть причину неполного
-BSL-анализа» — под который закрыт #1338 — смержен 2026-10-12. В опубликованном
-рантайме исправления нет; найдётся оно только в следующем релизе. Подробности и
-готовый текст комментария — `issue-check-bsl-comment.md`.
+```
+validators: ["bsl"], code: CommonModuleInvalidType
+message: Общий модуль должен быть одного из типов: Server, ServerCall, Client, ClientServer
+```
+
+Значит валидатор реализован и работает, а первый вызов — прогрев индекса (то же,
+что `search` с `detailCode: "buildingIndex"`). Диагностика оказалась верной:
+серверному общему модулю нужны `Server + ExternalConnection + Client (обычное)`,
+а не один `Server`. После `props.set` проверка стала `passed`. Подробности — в
+[platform-findings.md](platform-findings.md).
+
+История с #1365 при этом полезна как таковая: она объясняет, почему в 0.13
+причина не называлась, но к текущему поведению уже не относится.
+
 
 **Что уже сделано в порте** (проверено прогоном, не только кодом):
 
@@ -355,5 +368,6 @@ UNICA_TEST_ENGINES=1 UNICA_TEST_WORKSPACE=<проект с BSL-модулем> n
 апстрима. Значит AGPL у `v8-runner` и LGPL у `bsl-analyzer` не превращаются в
 обязательства распространения — в отличие от варианта «вендорить бутстрап».
 
-**Что осталось непроверенным.** `push` и `launch` (нужна реальная работа
-платформы и лицензия) и полный прогон BSL-диагностики — из-за щели выше.
+**Что осталось непроверенным.** Только запуск YaXUnit: операции, запускающей
+тесты, на поверхности 0.13/0.15 нет. `push`, `launch` и BSL-диагностика
+проверены — см. [platform-findings.md](platform-findings.md).

@@ -37,10 +37,12 @@ stdio MCP-сервер с 11 инструментами для метаданн�
 - **Провайдер `kb-1ci` убран из `unica.docs`** — в 0.13 он стабильно падал по
   таймауту на этой машине и стоил ~35 с на каждый вызов; теперь `docs` отвечает
   за секунды и отдаёт `platform-syntax-help` и `v8std`.
-- **Диагностика BSL называет причину**: вместо безымянного «BSL analysis did not
-  complete» приходит `bsl-analyzer: diagnostic provider did not produce a result
-  for an unclassified reason. Repeat the call; if the problem persists, report
-  this reason`. Сам отказ пока остаётся.
+- **Диагностика BSL работает.** Первый вызов `unica.check` на модуле после старта
+  сервера может ответить «BSL analysis did not complete … Repeat the call» —
+  это прогрев индекса; повторный вызов возвращает настоящие диагностики
+  (`validators: ["bsl"]`). На сценарном модуле проверка нашла реальное нарушение
+  стандарта (`CommonModuleInvalidType`) и после `props.set` стала `passed` — см.
+  [platform-findings.md](docs/platform-findings.md).
 - **`v8-runner` обновлён до 0.15.3** (был 0.14.0), ядро выросло до 40 МБ.
 - Зависание `1cv8`, запущенного раннером, обновление **не вылечило**, но причина
   оказалась не в версии: рантайм лежал в рабочем каталоге и унаследовал Low-метку
