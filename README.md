@@ -44,7 +44,7 @@ stdio MCP-сервер с 11 инструментами для метаданн�
 - **`v8-runner` обновлён до 0.15.3** (был 0.14.0), ядро выросло до 40 МБ.
 - Зависание `1cv8`, запущенного раннером, обновление **не вылечило**, но причина
   оказалась не в версии: рантайм лежал в рабочем каталоге и унаследовал Low-метку
-  песочницы DSH (см. [docs/platform-hang-investigation.md](docs/platform-hang-investigation.md)).
+  песочницы DSH (см. [platform-investigation.md](docs/platform-investigation.md)).
 
 ## Проверка порта и находки
 
@@ -52,11 +52,12 @@ stdio MCP-сервер с 11 инструментами для метаданн�
 
 | Файл | Что внутри |
 |---|---|
-| [unica-0.13-check.md](docs/unica-0.13-check.md) | план проверки контракта поверхности |
-| [unica-0.13-e2e.md](docs/unica-0.13-e2e.md) | сценарий приёмки: проект, база, метаданные, поиск, справка, тесты |
-| [unica-e2e-run-report.md](docs/unica-e2e-run-report.md) | прогон сценария и его результаты |
-| [unica-platform-findings.md](docs/unica-platform-findings.md) | дефекты XML, найденные платформой, и прогон Vanessa |
-| [platform-hang-investigation.md](docs/platform-hang-investigation.md) | почему платформа не работала под DSH и что это дало |
+| [port-check.md](docs/port-check.md) | план проверки контракта поверхности |
+| [acceptance-scenario.md](docs/acceptance-scenario.md) | сценарий приёмки: проект, база, метаданные, поиск, справка, тесты |
+| [run-report.md](docs/run-report.md) | прогон сценария и его результаты |
+| [platform-findings.md](docs/platform-findings.md) | дефекты XML, найденные платформой, и прогон Vanessa |
+| [platform-investigation.md](docs/platform-investigation.md) | почему платформа не работала под DSH и что это дало |
+
 
 
 ## Возможности
