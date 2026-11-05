@@ -42,8 +42,22 @@ stdio MCP-сервер с 11 инструментами для метаданн�
   for an unclassified reason. Repeat the call; if the problem persists, report
   this reason`. Сам отказ пока остаётся.
 - **`v8-runner` обновлён до 0.15.3** (был 0.14.0), ядро выросло до 40 МБ.
-- Зависание `1cv8`, запущенного раннером, обновление **не вылечило** — это
-  окружение, а не версия (см. `unica-e2e-run-report.md`).
+- Зависание `1cv8`, запущенного раннером, обновление **не вылечило**, но причина
+  оказалась не в версии: рантайм лежал в рабочем каталоге и унаследовал Low-метку
+  песочницы DSH (см. [docs/platform-hang-investigation.md](docs/platform-hang-investigation.md)).
+
+## Проверка порта и находки
+
+Документы под [`docs/`](docs/):
+
+| Файл | Что внутри |
+|---|---|
+| [unica-0.13-check.md](docs/unica-0.13-check.md) | план проверки контракта поверхности |
+| [unica-0.13-e2e.md](docs/unica-0.13-e2e.md) | сценарий приёмки: проект, база, метаданные, поиск, справка, тесты |
+| [unica-e2e-run-report.md](docs/unica-e2e-run-report.md) | прогон сценария и его результаты |
+| [unica-platform-findings.md](docs/unica-platform-findings.md) | дефекты XML, найденные платформой, и прогон Vanessa |
+| [platform-hang-investigation.md](docs/platform-hang-investigation.md) | почему платформа не работала под DSH и что это дало |
+
 
 ## Возможности
 
