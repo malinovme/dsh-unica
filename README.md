@@ -139,9 +139,19 @@ tar -xzf dsh-plugin-unica.tar.gz && node install.mjs --verify
 | `node install.mjs` | только агент-пресет для Web GUI (по умолчанию) |
 | `node install.mjs --verify` | то же плюс проверка: поднимает MCP-сервер и печатает результат |
 | `node install.mjs --cache-dir D:\unica-cache` | перенести кэш, если каталог по умолчанию отказывает демону |
+| `node install.mjs --workspace D:\proj\ib` | закрепить каталог проекта: без него переподключение сервера берёт каталог профиля |
 | `node install.mjs --target both` | ещё и патч профиля `headless` |
 | `node install.mjs --target preset --profile desktop` | установка в **DSH Desktop** |
 | `node install.mjs --dry-run` | показать план, ничего не записывать |
+
+> **Не размещайте кэш рантайма внутри рабочего каталога.** DSH помечает файлы в
+> рабочем каталоге низкой целостностью (Low), и метка наследуется на всё, что там
+> создаётся. `v8-runner.exe` из такого кэша запускается с Low-токеном, а его дети
+> — `1cv8`, `ibcmd` — не могут писать в профиль пользователя, куда 1С обязана
+> писать (`%LOCALAPPDATA%\1C\1cv8`). Симптомы: `ibcmd` падает с «доступ запрещён»
+> или ошибкой `standalone-server/lock.pid`, а `1cv8 DESIGNER` зависает, потребляя
+> процессор. Держите кэш вне рабочего каталога — по умолчанию он и так лежит в
+> `$DSH_HOME/unica/runtimes`.
 
 **Какой вариант нужен.** Web GUI и DSH Desktop собирают сессии из агент-пресета,
 поэтому им нужен `--target preset` (у Desktop дополнительно `--profile desktop`).
