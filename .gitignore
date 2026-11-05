@@ -1,6 +1,11 @@
 # Build output — regenerate with `node package.mjs`
 dist/
 
+# Release artifact the same command writes to the repository root; it is uploaded
+# to a GitHub release, not tracked.
+dsh-plugin-unica.tar.gz
+dsh-plugin-unica.tar.gz.sha256.json
+
 # Dependencies, if anyone ever runs pnpm/npm here
 node_modules/
 

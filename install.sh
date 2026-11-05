@@ -10,7 +10,7 @@
 # implementation of the install logic, written once in Node.
 #
 # Environment overrides:
-#   UNICA_VERSION=v0.13.0       release tag to install (default: the latest)
+#   UNICA_VERSION=v0.15.0.1    release tag to install (default: the latest)
 #   UNICA_PROFILE=web           DSH profile to patch (default: desktop if the
 #                               Desktop app has one, otherwise web)
 #   UNICA_DSH_HOME=~/.dsh       DSH home; normally taken from the environment

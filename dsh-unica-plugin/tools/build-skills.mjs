@@ -31,9 +31,21 @@ const MAP_PATH = join(OUT_ROOT, 'tool-map.json')
 const SKILLS_OUT = join(OUT_ROOT, 'skills')
 const REFERENCES_OUT = join(OUT_ROOT, 'references')
 
+// The upstream plugin cache is keyed by the version the port currently tracks, so
+// the default comes from runtime-manifest.json rather than a literal that goes
+// stale on every upgrade.
+const MANIFEST = JSON.parse(await readFile(join(OUT_ROOT, 'runtime-manifest.json'), 'utf8'))
 const SOURCE_PLUGIN =
   process.env.UNICA_UPSTREAM_PLUGIN ??
-  join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.codex', 'plugins', 'cache', 'unica', 'unica', process.env.UNICA_UPSTREAM_VERSION ?? '0.13.0')
+  join(
+    process.env.USERPROFILE ?? process.env.HOME ?? '',
+    '.codex',
+    'plugins',
+    'cache',
+    'unica',
+    'unica',
+    process.env.UNICA_UPSTREAM_VERSION ?? MANIFEST.pluginVersion,
+  )
 
 if (!existsSync(join(SOURCE_PLUGIN, 'skills'))) {
   throw new Error(
