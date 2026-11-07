@@ -231,3 +231,67 @@ jobs:
             exit 1
           fi
           if grep -q $'\r' "$f"; then echo "::error file=$f::contains CRLF"; exit 1; fi
+
+  # install.sh is a downloader: it verifies the release archive, unpacks it and
+  # hands over to install.mjs. Exercising it needs an archive to download, so one
+  # is built from this checkout and served from a local HTTP server. This is the
+  # gate for the archive shape drifting away from the script — the current one
+  # stopped shipping `bootstrap/launch.sh`, and the unconditional normalize step
+  # turned every one-command install into a failure.
+  posix-installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Build and serve both archive shapes
+        run: |
+          mkdir -p /tmp/unica-www/new /tmp/unica-www/legacy /tmp/unica-plugin-legacy
+          tar -czf /tmp/unica-www/new/dsh-plugin-unica.tar.gz -C dsh-unica-plugin .
+          cp -R dsh-unica-plugin/. /tmp/unica-plugin-legacy/
+          # A 0.12-era archive: the POSIX launcher exists and was packaged on
+          # Windows, so it carries CRLF and has to be repaired on the way in.
+          printf '#!/bin/sh\r\necho legacy\r\n' > /tmp/unica-plugin-legacy/bootstrap/launch.sh
+          tar -czf /tmp/unica-www/legacy/dsh-plugin-unica.tar.gz -C /tmp/unica-plugin-legacy .
+          for dir in /tmp/unica-www/new /tmp/unica-www/legacy; do
+            node -e 'const {createHash}=require("node:crypto");const fs=require("node:fs");const f=process.argv[1];const h=createHash("sha256").update(fs.readFileSync(f)).digest("hex");fs.writeFileSync(f+".sha256.json",JSON.stringify({sha256:h}))' "$dir/dsh-plugin-unica.tar.gz"
+          done
+
+      # UNICA_BASE_URL is the seam install.ps1 already has as -BaseUrl: the
+      # download is exercised without the network, against bytes this repository
+      # just built.
+      - name: install.sh installs both archive shapes
+        run: |
+          python3 -m http.server 18080 --directory /tmp/unica-www/new >/tmp/http-new.log 2>&1 &
+          echo $! >/tmp/http-new.pid
+          python3 -m http.server 18081 --directory /tmp/unica-www/legacy >/tmp/http-legacy.log 2>&1 &
+          echo $! >/tmp/http-legacy.pid
+          trap 'kill "$(cat /tmp/http-new.pid)" "$(cat /tmp/http-legacy.pid)" 2>/dev/null || true' EXIT
+          for port in 18080 18081; do
+            for attempt in $(seq 1 50); do
+              if curl -fsS "http://127.0.0.1:$port/dsh-plugin-unica.tar.gz.sha256.json" >/dev/null 2>&1; then
+                break
+              fi
+              sleep 0.2
+            done
+          done
+
+          env UNICA_BASE_URL=http://127.0.0.1:18080 UNICA_VERIFY=0 UNICA_TARGET=profile \
+            UNICA_INSTALL_DIR=/tmp/unica-install-new UNICA_DSH_HOME=/tmp/unica-home-new \
+            sh install.sh
+          test -f /tmp/unica-install-new/bootstrap/launch.mjs
+          test -f /tmp/unica-home-new/profiles/web/cordis.patch.yml
+
+          env UNICA_BASE_URL=http://127.0.0.1:18081 UNICA_VERIFY=0 UNICA_TARGET=profile \
+            UNICA_INSTALL_DIR=/tmp/unica-install-legacy UNICA_DSH_HOME=/tmp/unica-home-legacy \
+            sh install.sh
+          test -f /tmp/unica-install-legacy/bootstrap/launch.sh
+          if grep -q $'\r' /tmp/unica-install-legacy/bootstrap/launch.sh; then
+            echo "::error::the legacy launcher was installed with CRLF" >&2
+            exit 1
+          fi
+
+          echo "the current archive installs, and a legacy launcher is still repaired"

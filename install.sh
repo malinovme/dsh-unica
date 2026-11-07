@@ -16,6 +16,9 @@
 #   UNICA_DSH_HOME=~/.dsh       DSH home; normally taken from the environment
 #   UNICA_VERIFY=0              skip the MCP handshake check after installing
 #   UNICA_TARGET=preset         preset | profile | both
+#   UNICA_BASE_URL=http://...   release download base: a mirror, or a local
+#                               directory served for the tests; matches the
+#                               -BaseUrl parameter of install.ps1
 set -eu
 
 REPO="${UNICA_REPO:-malinovme/dsh-unica}"
@@ -38,8 +41,10 @@ case "$(uname -s)" in
 esac
 
 # ── which release ───────────────────────────────────────────────────────────
+# A local mirror answers by URL, so it rules out `gh release download` and the
+# latest-release lookup: the version is only a label then.
 USE_GH=0
-if command -v gh >/dev/null 2>&1 && gh auth status --hostname github.com >/dev/null 2>&1; then
+if [ -z "${UNICA_BASE_URL:-}" ] && command -v gh >/dev/null 2>&1 && gh auth status --hostname github.com >/dev/null 2>&1; then
   USE_GH=1
 fi
 # The latest release is asked for rather than hard-coded: a version written into
@@ -48,6 +53,8 @@ fi
 # which is also what makes this work offline against a mirror.
 if [ -n "${UNICA_VERSION:-}" ]; then
   VERSION="$UNICA_VERSION"
+elif [ -n "${UNICA_BASE_URL:-}" ]; then
+  VERSION="local"
 elif [ "$USE_GH" = "1" ]; then
   VERSION="$(gh release view --repo "$REPO" --json tagName -q .tagName 2>/dev/null || true)"
 fi
@@ -93,7 +100,9 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/unica-install.XXXXXX")"
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT INT TERM
 
-BASE="https://github.com/$REPO/releases/download/$VERSION"
+# `UNICA_BASE_URL` names a mirror (or the local directory the tests serve); a
+# release tag has no meaning there, so the base is used verbatim.
+BASE="${UNICA_BASE_URL:-https://github.com/$REPO/releases/download/$VERSION}"
 say "  archive : $BASE/$ASSET"
 fetch "$BASE/$ASSET" "$WORK/$ASSET" || die "cannot download $BASE/$ASSET — check the version and that you have access to the repository (it is private)."
 fetch "$BASE/$ASSET.sha256.json" "$WORK/$ASSET.sha256.json" || die "cannot download the checksum manifest."
@@ -124,13 +133,18 @@ mkdir -p "$INSTALL"
 tar -xzf "$WORK/$ASSET" -C "$INSTALL" || die "cannot unpack the archive."
 [ -f "$INSTALL/install.mjs" ] || die "the archive does not contain install.mjs — it is not the plugin archive."
 # Older releases were packaged on Windows with CRLF in the POSIX launcher.
-# Normalize only this text file, after verifying the original archive bytes.
-node -e '
+# 0.13 dropped that launcher in favour of `bootstrap/launch.mjs`, which `node`
+# starts without a shebang, so current archives do not contain the file at all.
+# Normalizing is therefore conditional: an archive with the file must be
+# repaired, and an archive without it is the normal case, not a failure.
+if [ -f "$INSTALL/bootstrap/launch.sh" ]; then
+  node -e '
 const fs = require("node:fs")
 const file = process.argv[1]
 const text = fs.readFileSync(file, "utf8")
 fs.writeFileSync(file, text.replace(/\r\n/g, "\n"))
 ' "$INSTALL/bootstrap/launch.sh" || die "cannot normalize the POSIX launcher."
+fi
 say "  installed to: $INSTALL"
 
 # ── install ─────────────────────────────────────────────────────────────────
