@@ -1,0 +1,66 @@
+# Build output — regenerate with `node package.mjs`
+dist/
+
+# Release artifact the same command writes to the repository root; it is uploaded
+# to a GitHub release, not tracked.
+dsh-plugin-unica.tar.gz
+dsh-plugin-unica.tar.gz.sha256.json
+
+# Dependencies, if anyone ever runs pnpm/npm here
+node_modules/
+
+# Written by `node tools/build-skills.mjs`; contains absolute paths of the
+# build machine, so it is machine-specific rather than source.
+# A bare name matches at any depth — `tools/build-report.json` would be
+# anchored to the repository root and miss dsh-unica-plugin/tools/.
+build-report.json
+
+# Snapshots of this machine's live DSH profile patch, kept out of the source
+# tree: they carry absolute paths, exactly like build-report.json.
+.dsh/
+
+# The unica runtime cache when it is relocated here with `--cache-dir`, and the
+# cache the installer picks for itself when the default location refuses the
+# bootstrap. Both are working copies of a ~300 MB third-party runtime, not source.
+.dsh-cache/
+.unica-cache/
+
+# Scratch directories used while testing the installer and the wrappers.
+#
+# These are matched by prefix on purpose: a fixed list of names had already let
+# one of them (`.profiles/`, a fake DSH home for the profile tests) reach a
+# commit, because the list only grows when someone remembers to add to it.
+.probe-*/
+.verifytest*/
+.ps1test*/
+.ps1install/
+.envtest/
+.localrel/
+.finaltest/
+.profiles/
+.vtest/
+.vinstall/
+.shcheck/
+.relbuild/
+.relcheck*/
+.mactest/
+.rebuild/
+.diag*/
+
+# Scratch directories used while porting and testing 0.13.
+.i13/
+.l13cache/
+.u13/
+.upstream-013/
+.upstream-013-artifacts/
+.fromarchive/
+.archinstall/
+.new-toolmap.json
+
+# Probe scripts written by hand while diagnosing the port.
+.probe-*.mjs
+
+# Scratch directories from the 0.13 port verification: the extracted release
+# archive and the throwaway DSH home it was installed into.
+.finalarchive/
+.finalhome/

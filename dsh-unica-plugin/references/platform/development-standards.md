@@ -1,0 +1,44 @@
+# 1C Development Standards
+
+Use these standards during BSL implementation, review, and refactoring.
+
+## Architecture
+
+- Put reusable business logic in common modules.
+- Keep form modules focused on UI lifecycle, event handlers, and client/server
+  orchestration.
+- Keep integration boundary code separate from domain logic.
+- Prefer small exported procedures/functions with explicit input contracts.
+
+## Forms
+
+- Avoid unnecessary client/server round trips.
+- Add event hooks in both `Form.xml` and the module procedure/function.
+- Keep form commands and attributes aligned with the form XML.
+- Do not use modal UI calls unless the target client mode explicitly supports
+  them.
+
+## Naming And Comments
+
+- See `metadata-conventions.md` for object naming, synonym, representation, and
+  fill-check conventions.
+- Use project-local naming conventions when present.
+- Add comments for non-obvious platform constraints and integration decisions,
+  not for trivial assignments.
+- Keep modification comments consistent with the project baseline.
+
+## Validation
+
+Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
+контракт каждой — `argsSchema`, `execution`, `previewRequired`,
+`dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
+выбирай только операцию с `implemented: true` и не выдумывай аргументов
+записи с `argsSchema: null`. Для плановой операции сначала проверь результат
+`dryRun: true`, затем исполняй запрос с `dryRun: false`. Preview не фиксирует
+входы между вызовами. Не обходи контракт прямым runner-ом.
+
+- Run object-specific validation after metadata changes.
+- Check syntax with `mcp__unica__unica_check_6db7d2a7495f`; test runs are outside the v0.13 surface,
+  so retain an explicit residual risk: a static check does not validate BSL in
+  the runtime.
+- For risky changes, inspect metadata shape before and after the edit.

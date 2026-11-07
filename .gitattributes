@@ -1,0 +1,16 @@
+# Line-ending policy for files whose meaning depends on it.
+#
+# The port carries no prebuilt binaries any more: upstream 0.13 stopped shipping
+# per-platform bootstrap binaries, and `bootstrap/launch.mjs` fetches the runtime
+# instead. What remains sensitive is the shell wrapper, which `sh` reads literally:
+# a CRLF arrival turns a command name into one ending in a carriage return.
+install.sh text eol=lf
+
+# The Node launcher is ordinary source, but pinning LF keeps every checkout of it
+# byte-identical, which is what a release checksum is computed over.
+dsh-unica-plugin/bootstrap/launch.mjs text eol=lf
+
+# Note what this file cannot do: it does NOT carry the executable bit. Git records
+# modes from the filesystem, and on Windows git writes 100644 for every file while
+# nothing local notices. The `posix-modes` CI job asserts the bit for `install.sh`;
+# that job is the guard against a Windows commit dropping it, not this file.

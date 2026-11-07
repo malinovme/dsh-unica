@@ -1,0 +1,132 @@
+---
+name: role-edit
+description: Типизированно изменить права существующей роли 1С по логическому адресу, сохранив RLS, шаблоны и остальные права.
+argument-hint: <at> <operations>
+allowed-tools:
+  - Read
+  - Glob
+---
+
+# /unica:role-edit — точечное редактирование прав роли
+
+## MCP routing
+
+- Preferred path: use MCP `unica` tool `mcp__unica__unica_apply_8ba7af26408e` с операцией `right.set`.
+- Роль называет адрес: `args.at` вида `<набор>:Role.<Имя>`. Физический
+  `Rights.xml` — внутренняя деталь; наружу путь отдаёт только аварийный
+  `mcp__unica__unica_resolve_55e2d51be222`, и в обычном ходе работы он не нужен.
+- Имя набора даёт `mcp__unica__unica_view_6f3a42290cc8 {}`, адрес роли по имени —
+  `mcp__unica__unica_search_a8644a757dff {corpus: "names", kind: "Role"}`. `"main"` ниже только пример.
+- Сначала вызови `mcp__unica__unica_apply_8ba7af26408e` с `at` и `ops`: это план без записи.
+  Когда пользователь поручил внести эту правку, вызови `mcp__unica__unica_apply_8ba7af26408e` только
+  с `executionToken` из `data.executionToken` успешного плана.
+- Читай из ответа `changed`, `effects` по порядку операций и диагностики.
+  Физический путь и diff контрактом результата не являются.
+
+## Операция `right.set`
+
+`args.values` принимает `object`, `right` и хотя бы одно из `value` и `rls`:
+
+| Поле | Что задаёт |
+|---|---|
+| `object` | Объект метаданных, например `Catalog.Демо` |
+| `right` | Имя права, например `Delete` |
+| `value` | Булево значение права |
+| `rls` | Условие ограничения записей |
+
+Операции выполняются по порядку и публикуются одной транзакцией: либо все,
+либо ни одной. Повтор эквивалентной операции даёт `changed: false` без записи.
+
+**Объект, ещё не перечисленный в роли, добавляется сам.** Прежний писатель
+отказывал `object_not_listed` и требовал сперва внести объект Конфигуратором;
+канонический `right.set` заводит объектный блок вместе с правом.
+
+Платформа хранит объектное право только со значением, отличным от умолчания
+роли `setForNewObjects`. Поэтому `right.set` со значением умолчания (обычно
+`false`) удаляет элемент права вместе с его RLS, а опустевший объектный блок —
+целиком; если право уже отсутствует, это законный no-op.
+
+Автоматическое включение зависимых прав в согласуемый preview ещё не
+реализовано ([задача #941](https://github.com/IngvarConsulting/unica/issues/941)).
+До реализации проверь доказанные зависимости и согласуй полный набор прав
+с человеком. Не считай одиночный `right.set` проверкой полноты этого набора.
+
+Для `DataProcessor.*` значение `Use=false` применяет правило платформы:
+удаляется весь объектный блок вместе с зависимым правом `View`. На другие виды
+объектов и права это не обобщается.
+
+## MCP examples
+
+### Предпросмотр
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_apply_8ba7af26408e",
+    "arguments": {
+      "at": "main:Role.Демо",
+      "ops": [
+        {
+          "op": "right.set",
+          "args": {
+            "at": "main:Role.Демо",
+            "values": {
+              "object": "Catalog.Демо",
+              "right": "Delete",
+              "value": false
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+### Право с ограничением записей
+
+Сначала получи план этого изменения:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_apply_8ba7af26408e",
+    "arguments": {
+      "at": "main:Role.Демо",
+      "ops": [
+        {
+          "op": "right.set",
+          "args": {
+            "at": "main:Role.Демо",
+            "values": {
+              "object": "Document.Заказ",
+              "right": "Read",
+              "value": true,
+              "rls": "ГДЕ Автор = &Пользователь"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Для исполнения передай `data.executionToken` из этого успешного плана:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_apply_8ba7af26408e",
+    "arguments": {
+      "executionToken": "<data.executionToken из успешного плана>"
+    }
+  }
+}
+```

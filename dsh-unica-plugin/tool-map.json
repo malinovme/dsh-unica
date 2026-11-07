@@ -1,0 +1,13 @@
+{
+  "unica.view": "mcp__unica__unica_view_6f3a42290cc8",
+  "unica.apply": "mcp__unica__unica_apply_8ba7af26408e",
+  "unica.resolve": "mcp__unica__unica_resolve_55e2d51be222",
+  "unica.search": "mcp__unica__unica_search_a8644a757dff",
+  "unica.check": "mcp__unica__unica_check_6db7d2a7495f",
+  "unica.diff": "mcp__unica__unica_diff_14922c75f4c4",
+  "unica.run": "mcp__unica__unica_run_189d01f64719",
+  "unica.docs": "mcp__unica__unica_docs_fd15d9ecf894",
+  "unica.task.get": "mcp__unica__unica_task_get_011884f98058",
+  "unica.task.result": "mcp__unica__unica_task_result_67327c71a8ed",
+  "unica.task.cancel": "mcp__unica__unica_task_cancel_fa69de1d41bf"
+}

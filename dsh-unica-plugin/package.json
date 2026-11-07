@@ -1,0 +1,38 @@
+{
+  "name": "dsh-plugin-unica",
+  "version": "0.15.0.2",
+  "private": true,
+  "description": "Unica for DeepSeek Harness: 1C:Enterprise development skills plus the unica MCP server, exposed as DSH skills and MCP tools.",
+  "license": "LGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "install-plugin": "node install.mjs",
+    "package": "node package.mjs",
+    "rebuild-skills": "node tools/build-skills.mjs",
+    "check-refs": "node tools/check-refs.mjs .",
+    "check-encoding": "node tools/check-encoding.mjs skills references"
+  },
+  "dsh": {
+    "configTrees": [
+      {
+        "mount": "skills",
+        "path": "skills",
+        "scanRoster": true
+      }
+    ]
+  },
+  "unica": {
+    "upstream": "https://github.com/IngvarConsulting/unica",
+    "upstreamVersion": "0.15.0-rc.1",
+    "portRevision": "2",
+    "mcpServerName": "unica",
+    "mcpTools": 11,
+    "skills": 55,
+    "referenceFiles": 48,
+    "runtimeTargets": [
+      "darwin-arm64",
+      "linux-x64",
+      "win-x64"
+    ]
+  }
+}

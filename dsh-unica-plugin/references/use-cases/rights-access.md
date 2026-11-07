@@ -1,0 +1,38 @@
+# Rights And Access
+
+## When to use
+
+Use this when the user needs to inspect, create, validate, or audit roles,
+object rights, RLS restrictions, templates, or least-privilege access for code
+that touches metadata objects.
+
+Do not use this for OS/user administration or infobase authentication recovery.
+Use `db-auth-check` only to classify already supplied credential/license
+evidence; it does not probe the infobase.
+
+- Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
+контракт каждой — `argsSchema`, `execution`, `previewRequired`,
+`dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
+при `implemented: true` используй опубликованную `argsSchema`; при
+`support.state: limited` разрешено только подмножество `support.supportedArgs`.
+При `support.state: unavailable` остановись; не выдумывай аргументов при
+`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
+затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
+вызовами. Не обходи контракт прямым runner-ом.
+
+## Primary path
+
+Use native role tools through MCP `unica`:
+
+- `mcp__unica__unica_view_6f3a42290cc8` on the role node
+- `unica.role.compile`
+- `mcp__unica__unica_check_6db7d2a7495f` on the role node (validator `role`)
+
+When code changes require new rights, inspect the touched metadata objects and
+compile focused role definitions rather than broad presets.
+
+## Related references
+
+- `../specs/1c-role-spec.md`
+- `../specs/role-dsl-spec.md`
+- `../platform/development-standards.md`

@@ -1,0 +1,141 @@
+---
+name: xdto
+description: Просмотреть или точечно изменить схему XDTO-пакета 1С по логическому адресу. Используй для EnterpriseData `valueType`, `objectType` и свойств типов.
+argument-hint: <sourceSet> <XDTOPackage.Name> <ops>
+allowed-tools:
+  - Read
+  - Glob
+---
+
+# /unica:xdto — XDTO-пакеты 1С
+
+Перед чтением или мутацией сверяй поддерживаемую грамматику и байтовые гарантии
+с `../../references/specs/1c-xdto-spec.md`.
+
+## MCP routing
+
+- Используй только MCP `unica`: `mcp__unica__unica_view_6f3a42290cc8` читает пакет по адресу, а
+  `mcp__unica__unica_apply_8ba7af26408e` с операциями семейства XDTO строит и применяет точечную мутацию.
+- Всегда начинай с `mcp__unica__unica_view_6f3a42290cc8`, затем перед каждой мутацией вызывай
+  `mcp__unica__unica_apply_8ba7af26408e` с `at` и `ops`. Исполняй план вызовом только с
+  `executionToken` из `data.executionToken` после поручения пользователя; любое изменение
+  аргументов требует нового preview.
+- Планирующий `mcp__unica__unica_apply_8ba7af26408e` принимает непустой упорядоченный массив `ops`.
+  Связное изменение — тип и его свойства — веди одним планом: операции видят
+  результаты предыдущих, публикация одна, отказ любой операции не оставляет
+  частичной записи. Ошибка элемента называет `ops[<индекс>]`.
+- И читателю, и писателю передавай один адрес `at` вида
+  `<набор>:XDTOPackage.<Имя>` (для операций над типом —
+  `<набор>:XDTOPackage.<Имя>.Type.<Тип>`). Никогда не передавай путь к
+  `XDTOPackages/.../Ext/Package.bin`: он остаётся внутренней раскладкой
+  платформенной выгрузки.
+- Не вызывай donor-команды compile, decompile или validate и не запускай их
+  скриптовые обёртки: публичная граница этого скилла состоит ровно из двух
+  нативных инструментов выше.
+
+Операции семейства XDTO в `ops` — закрытое объединение с тегом `op`, а их
+аргументы едут внутри `args.values`: `valueType.add` (`name`, `base`),
+`objectType.add` (`name`), `property.add` (`property`, необязательный
+`propertyPath`), `type.remove`, `property.remove` (`name`, необязательный
+`propertyPath`). Тип, над которым идёт операция, называет `at`, а не отдельный
+аргумент. Для вложенного анонимного типа используй `propertyPath`, например
+`"СсылкаНаОбъект"` для `ЛюбаяСсылка`. Writer сохраняет BOM и наблюдённые
+переводы строк, а повтор того же добавления возвращает no-op. QName в `base` и
+`property.type` передавай с существующим префиксом. Если префикс не виден в
+области вставки, writer повторит его объявление локально только при
+единственном доказанном соответствии префикса URI во всём пакете;
+отсутствующее или противоречивое соответствие отклоняется без угадывания URI.
+
+## 1. Прочитать логическую цель
+
+Корень пакета отвечает целевым пространством имён и счётчиками, а состав лежит
+в ветвях `Namespace`, `Type` и `Property`; спускайся в нужную адресом из
+`branches`.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_view_6f3a42290cc8",
+    "arguments": {
+      "cwd": "<workspace>",
+      "at": "main:XDTOPackage.EnterpriseData_1_17_3"
+    }
+  }
+}
+```
+
+Отдельный тип и его свойства читаются тем же вызовом глубже по адресу:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_view_6f3a42290cc8",
+    "arguments": {
+      "cwd": "<workspace>",
+      "at": "main:XDTOPackage.EnterpriseData_1_17_3.Type.ЛюбаяСсылка"
+    }
+  }
+}
+```
+
+## 2. Построить preview
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_apply_8ba7af26408e",
+    "arguments": {
+      "at": "main:XDTOPackage.EnterpriseData_1_17_3.Type.ЛюбаяСсылка",
+      "ops": [
+        {
+          "op": "property.add",
+          "args": {
+            "values": {
+              "propertyPath": "СсылкаНаОбъект",
+              "property": {
+                "name": "Документ_НовыйДокумент",
+                "type": "tns:Документ_ЗаказКлиента",
+                "minOccurs": 0
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Связная последовательность — например `objectType.add` и следом `property.add`
+к созданному типу — передаётся тем же массивом `ops` и проверяется одним
+preview.
+
+## 3. Применить только после подтверждения
+
+Когда пользователь поручил внести правку, передай только `executionToken`
+из `data.executionToken` успешного плана:
+
+Для исполнения передай `data.executionToken` из этого успешного плана:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "tools/call",
+  "params": {
+    "name": "mcp__unica__unica_apply_8ba7af26408e",
+    "arguments": {
+      "executionToken": "<data.executionToken из успешного плана>"
+    }
+  }
+}
+```

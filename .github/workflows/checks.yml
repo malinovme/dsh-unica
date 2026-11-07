@@ -1,0 +1,360 @@
+name: checks
+
+# Runs the port's integrity checks and guards the two contracts that are easy to
+# break silently: the skills/references pairing and the bootstrap binary modes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The checks that need no upstream payload: they read only what is committed.
+  integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      # The launcher is fetched as part of the archive and compared against the
+      # published checksum, so its line endings must not depend on who built the
+      # release. It used to be upstream's `launch.sh`; 0.13 replaced it with a Node
+      # file, which keeps the same requirement for a different reason.
+      - name: Node launcher uses LF line endings
+        run: |
+          node -e "if (require('node:fs').readFileSync('dsh-unica-plugin/bootstrap/launch.mjs','utf8').includes('\r')) throw new Error('launcher contains CRLF')"
+
+      # 26 skills cite ../../references/...; this proves every citation resolves
+      # to a file that is actually committed. Regenerating skills after an
+      # upstream bump is exactly when this breaks.
+      - name: Reference citations resolve
+        working-directory: dsh-unica-plugin
+        run: node tools/check-refs.mjs .
+
+      # The skills are almost entirely Russian prose. A bad UTF-8 round-trip in
+      # any copy step turns them into mojibake, which no other check would catch.
+      - name: No mojibake in ported files
+        working-directory: dsh-unica-plugin
+        run: node tools/check-encoding.mjs skills references
+
+      # Package metadata must match the committed tool and skill catalogs.
+      - name: Tool and skill counts match package metadata
+        working-directory: dsh-unica-plugin
+        run: node tools/surface-summary.mjs .
+
+      # Every tool name a skill mentions has to resolve through the map. 0.13
+      # renamed the whole surface (74 domain actions became eleven tools), and a
+      # stale name would have the model call something DSH does not expose. This
+      # replaces the 0.12 check for the four port corrections: those patched
+      # skills that no longer exist.
+      - name: Every tool name in the skills resolves
+        working-directory: dsh-unica-plugin
+        run: node tools/check-tool-names.mjs
+
+      # The artifact manifest decides what the launcher downloads and where it
+      # lands. A stale one silently degrades every engine-backed call to
+      # `bundled_tool_missing`, so it is generated from the tool lock and must not
+      # drift from it.
+      - name: The artifact manifest matches the tool lock
+        working-directory: dsh-unica-plugin
+        run: node tools/build-runtime-manifest.mjs --check
+
+      # The validator imports DSH's own `@deepseek-ai/dsh-agent-preset` and checks
+      # the declaration against its shipped schema, so it needs a harness. It is
+      # installed into an isolated prefix, never into the repository, and its
+      # location is passed explicitly rather than being guessed from PATH — the
+      # preset targets are exercised with the real thing, not with a stub parser.
+      - name: Install DSH into an isolated prefix
+        run: |
+          npm install --no-save --no-package-lock --prefix /tmp/dsh-ci @deepseek-ai/dsh@0.2.0-rc.2 >/dev/null
+          test -d /tmp/dsh-ci/node_modules/@deepseek-ai/dsh-agent-preset
+
+      # CI has no ambient DSH, so the shipped `standard` composition the preset
+      # copies is absent. A stub template is created first and handed to every
+      # installer call that builds a preset, which keeps the generator itself
+      # under test instead of skipping the check that depends on it. The stub has
+      # the 0.2.0 shape: a patch file whose `- insert:` row holds the composition
+      # in `config.plugins`.
+      - name: Create a stub preset template
+        run: |
+          cat > /tmp/ci-standard.cordis.yml <<'YAML'
+          # Stub of the shipped `standard` preset template.
+          - insert:
+              - id: preset-standard
+                name: '@deepseek-ai/dsh-agent-preset'
+                config:
+                  id: standard
+                  order: 1
+                  plugins:
+                    - id: persona
+                      name: '@deepseek-ai/dsh-persona'
+                      config:
+                        suffix: Your working directory is {{cwd}}.
+                    - id: skill-filesystem
+                      name: '@deepseek-ai/dsh-skill-filesystem'
+          YAML
+
+      # Both rows of the plan on a real POSIX platform, which is the branch the
+      # build machine cannot exercise: Git-bash does not start there.
+      - name: Installer composes a plan (POSIX branch)
+        working-directory: dsh-unica-plugin
+        run: |
+          node install.mjs --dsh-home /tmp/dsh-ci-home --target both --dry-run \
+            --standard /tmp/ci-standard.cordis.yml
+
+      - name: Installer builds a preset from the stub template
+        working-directory: dsh-unica-plugin
+        run: |
+          node install.mjs --dsh-home /tmp/dsh-ci-preset --target preset \
+            --standard /tmp/ci-standard.cordis.yml
+
+      # The preset is a plugin row of the profile patch now, and the retired
+      # scanned-directory layout must not come back: a preset left in
+      # `.agent-presets` is invisible to DSH 0.2.0, which is exactly how a
+      # working "Unica 1C" mode disappeared on a real machine.
+      - name: Generated patch is a preset row, not the retired layout
+        run: |
+          patch=/tmp/dsh-ci-preset/profiles/web/cordis.patch.yml
+          test -f "$patch"
+          if [ -e /tmp/dsh-ci-preset/.agent-presets ]; then
+            echo "::error::the installer still writes the retired .agent-presets layout" >&2
+            exit 1
+          fi
+          for needle in \
+            "- insert:" \
+            "id: preset-unica-1c" \
+            "name: '@deepseek-ai/dsh-agent-preset'" \
+            "id: unica-1c" \
+            "plugins:" \
+            "id: persona" \
+            "id: skill-filesystem" \
+            "id: mcp-unica" \
+            "id: skill-filesystem-unica" \
+            "serverName: unica" \
+            "UNICA_PROVIDER_STATE_DIR"
+          do
+            if ! grep -Fq -- "$needle" "$patch"; then
+              echo "::error file=$patch::missing '$needle' in the generated patch"
+              exit 1
+            fi
+          done
+          # Nothing but comments and the `insert:` keys themselves may sit in
+          # column 1. A top-level `- id:` entry is read as an override ADDRESS,
+          # not a declaration, so the row is silently dropped from the profile.
+          stray=$(grep -nE '^[^ #]' "$patch" | grep -vE '^[0-9]+:- insert:$' || true)
+          if [ -n "$stray" ]; then
+            echo "::error file=$patch::top-level entries a patch cannot declare:" >&2
+            echo "$stray" >&2
+            exit 1
+          fi
+          echo "every generated row is inserted"
+
+      # Idempotence matters as much as shape: re-running the installer must
+      # replace its own entries and leave every other entry of the patch alone.
+      - name: Re-running the installer keeps the patch stable
+        run: |
+          patch=/tmp/dsh-ci-preset/profiles/web/cordis.patch.yml
+          cp "$patch" /tmp/ci-patch-before.yml
+          ( cd dsh-unica-plugin && node install.mjs --dsh-home /tmp/dsh-ci-preset --target preset \
+              --standard /tmp/ci-standard.cordis.yml >/dev/null )
+          if ! diff -q /tmp/ci-patch-before.yml "$patch" >/dev/null; then
+            echo "::error file=$patch::a second install changed the file" >&2
+            diff -u /tmp/ci-patch-before.yml "$patch" || true
+            exit 1
+          fi
+          echo "a second install is a no-op"
+
+      # The session rules injected into the persona suffix must survive as YAML,
+      # not merely as text: a folded scalar that broke on indentation would parse
+      # to the wrong thing and lose every rule without any error.
+      - name: Generated patch parses and keeps the session rules
+        working-directory: dsh-unica-plugin
+        env:
+          DSH_INSTALL_ROOT: /tmp/dsh-ci
+        run: node tools/check-preset.mjs /tmp/dsh-ci-preset/profiles/web/cordis.patch.yml
+
+      # The gate the text assertions cannot be: compose the profile through DSH's
+      # own loader and prove the rows are IN the result. This is what catches a
+      # row that parses, typechecks and is still dropped by the patch layer.
+      - name: DSH composes the installed profile with the preset in it
+        working-directory: dsh-unica-plugin
+        env:
+          DSH_INSTALL_ROOT: /tmp/dsh-ci
+        run: node tools/verify-install.mjs /tmp/dsh-ci-preset web
+
+      # The strongest check available without a running DSH: the declaration is
+      # fed to the package that will consume it, and every row is resolved from
+      # the harness the way DSH resolves it.
+      - name: DSH schema-checks the generated preset
+        working-directory: dsh-unica-plugin
+        env:
+          DSH_INSTALL_ROOT: /tmp/dsh-ci
+        run: node tools/validate-preset.mjs /tmp/dsh-ci-preset/profiles/web/cordis.patch.yml
+
+      # DSH 0.2.1 removed the `cwd` prompt variable and the `suffix:` line it fed
+      # from the shipped persona row. The installer must attach the rules itself,
+      # and the result must not mention `{{cwd}}` — prompt rendering resolves
+      # every reference and throws on one that is not registered.
+      - name: Create a 0.2.1+ stub preset template
+        run: |
+          cat > /tmp/ci-standard-021.cordis.yml <<'YAML'
+          # Stub of the shipped `standard` preset template since DSH 0.2.1: the
+          # persona row carries a prefix and no suffix.
+          - insert:
+              - id: preset-standard
+                name: '@deepseek-ai/dsh-agent-preset'
+                config:
+                  id: standard
+                  order: 1
+                  plugins:
+                    - id: persona
+                      name: '@deepseek-ai/dsh-persona'
+                      config:
+                        prefix: You are a coding agent powered by the {{model}} model.
+                    - id: skill-filesystem
+                      name: '@deepseek-ai/dsh-skill-filesystem'
+          YAML
+
+      - name: Installer builds a preset for DSH 0.2.1+
+        working-directory: dsh-unica-plugin
+        run: |
+          node install.mjs --dsh-home /tmp/dsh-ci-preset-021 --target preset \
+            --standard /tmp/ci-standard-021.cordis.yml
+
+      - name: The 0.2.1+ preset keeps the rules and drops the dead cwd reference
+        run: |
+          patch=/tmp/dsh-ci-preset-021/profiles/web/cordis.patch.yml
+          if grep -Fq -- '{{cwd}}' "$patch"; then
+            echo "::error file=$patch::the preset references {{cwd}}, which DSH 0.2.1 removed" >&2
+            exit 1
+          fi
+          for needle in "Unica rules for this session:" "executionToken" "unica.check"; do
+            if ! grep -Fq -- "$needle" "$patch"; then
+              echo "::error file=$patch::missing '$needle' in the persona suffix" >&2
+              exit 1
+            fi
+          done
+          echo "rules kept without a cwd reference"
+
+      - name: 0.2.1+ preset parses and keeps the session rules
+        working-directory: dsh-unica-plugin
+        env:
+          DSH_INSTALL_ROOT: /tmp/dsh-ci
+        run: node tools/check-preset.mjs /tmp/dsh-ci-preset-021/profiles/web/cordis.patch.yml
+
+      - name: DSH composes the 0.2.1+ profile with the preset in it
+        working-directory: dsh-unica-plugin
+        env:
+          DSH_INSTALL_ROOT: /tmp/dsh-ci
+        run: node tools/verify-install.mjs /tmp/dsh-ci-preset-021 web
+
+      - name: DSH schema-checks the 0.2.1+ preset
+        working-directory: dsh-unica-plugin
+        env:
+          DSH_INSTALL_ROOT: /tmp/dsh-ci
+        run: node tools/validate-preset.mjs /tmp/dsh-ci-preset-021/profiles/web/cordis.patch.yml
+
+      - name: Installer rejects an unsupported platform
+        working-directory: dsh-unica-plugin
+        run: |
+          if node install.mjs --target profile --dry-run --platform freebsd 2>/dev/null; then
+            echo "expected a non-zero exit for an unsupported platform" >&2
+            exit 1
+          fi
+
+  # The port now carries no prebuilt binaries: the Node launcher fetches the
+  # runtime, so the old execute-bit checks for bootstrap/bin have nothing to
+  # inspect. What still matters is that the POSIX install path stays usable — the
+  # wrapper must be executable and must not arrive with CRLF, which `sh` reads as
+  # a command name ending in a carriage return.
+  posix-modes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: install.sh is executable and LF-only
+        run: |
+          fail=0
+          f=install.sh
+          [ -x "$f" ] || { echo "::error file=$f::not executable"; fail=1; }
+          if grep -q $'\r' "$f"; then echo "::error file=$f::contains CRLF"; fail=1; fi
+          exit $fail
+
+      - name: The Node launcher carries no execute bit and no CRLF
+        run: |
+          f=dsh-unica-plugin/bootstrap/launch.mjs
+          if [ -x "$f" ]; then
+            echo "::error file=$f::unexpectedly executable; it is invoked through node"
+            exit 1
+          fi
+          if grep -q $'\r' "$f"; then echo "::error file=$f::contains CRLF"; exit 1; fi
+
+  # install.sh is a downloader: it verifies the release archive, unpacks it and
+  # hands over to install.mjs. Exercising it needs an archive to download, so one
+  # is built from this checkout and served from a local HTTP server. This is the
+  # gate for the archive shape drifting away from the script — the current one
+  # stopped shipping `bootstrap/launch.sh`, and the unconditional normalize step
+  # turned every one-command install into a failure.
+  posix-installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Build and serve both archive shapes
+        run: |
+          mkdir -p /tmp/unica-www/new /tmp/unica-www/legacy /tmp/unica-plugin-legacy
+          tar -czf /tmp/unica-www/new/dsh-plugin-unica.tar.gz -C dsh-unica-plugin .
+          cp -R dsh-unica-plugin/. /tmp/unica-plugin-legacy/
+          # A 0.12-era archive: the POSIX launcher exists and was packaged on
+          # Windows, so it carries CRLF and has to be repaired on the way in.
+          printf '#!/bin/sh\r\necho legacy\r\n' > /tmp/unica-plugin-legacy/bootstrap/launch.sh
+          tar -czf /tmp/unica-www/legacy/dsh-plugin-unica.tar.gz -C /tmp/unica-plugin-legacy .
+          for dir in /tmp/unica-www/new /tmp/unica-www/legacy; do
+            node -e 'const {createHash}=require("node:crypto");const fs=require("node:fs");const f=process.argv[1];const h=createHash("sha256").update(fs.readFileSync(f)).digest("hex");fs.writeFileSync(f+".sha256.json",JSON.stringify({sha256:h}))' "$dir/dsh-plugin-unica.tar.gz"
+          done
+
+      # UNICA_BASE_URL is the seam install.ps1 already has as -BaseUrl: the
+      # download is exercised without the network, against bytes this repository
+      # just built.
+      - name: install.sh installs both archive shapes
+        run: |
+          python3 -m http.server 18080 --directory /tmp/unica-www/new >/tmp/http-new.log 2>&1 &
+          echo $! >/tmp/http-new.pid
+          python3 -m http.server 18081 --directory /tmp/unica-www/legacy >/tmp/http-legacy.log 2>&1 &
+          echo $! >/tmp/http-legacy.pid
+          trap 'kill "$(cat /tmp/http-new.pid)" "$(cat /tmp/http-legacy.pid)" 2>/dev/null || true' EXIT
+          for port in 18080 18081; do
+            for attempt in $(seq 1 50); do
+              if curl -fsS "http://127.0.0.1:$port/dsh-plugin-unica.tar.gz.sha256.json" >/dev/null 2>&1; then
+                break
+              fi
+              sleep 0.2
+            done
+          done
+
+          env UNICA_BASE_URL=http://127.0.0.1:18080 UNICA_VERIFY=0 UNICA_TARGET=profile \
+            UNICA_INSTALL_DIR=/tmp/unica-install-new UNICA_DSH_HOME=/tmp/unica-home-new \
+            sh install.sh
+          test -f /tmp/unica-install-new/bootstrap/launch.mjs
+          test -f /tmp/unica-home-new/profiles/web/cordis.patch.yml
+
+          env UNICA_BASE_URL=http://127.0.0.1:18081 UNICA_VERIFY=0 UNICA_TARGET=profile \
+            UNICA_INSTALL_DIR=/tmp/unica-install-legacy UNICA_DSH_HOME=/tmp/unica-home-legacy \
+            sh install.sh
+          test -f /tmp/unica-install-legacy/bootstrap/launch.sh
+          if grep -q $'\r' /tmp/unica-install-legacy/bootstrap/launch.sh; then
+            echo "::error::the legacy launcher was installed with CRLF" >&2
+            exit 1
+          fi
+
+          echo "the current archive installs, and a legacy launcher is still repaired"
