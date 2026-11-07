@@ -116,8 +116,14 @@ export function checkPreset(path, searchDirs = [], kind = 'patch') {
 
   const persona = rows.find((r) => r.id === 'persona')
   const suffix = persona?.config?.suffix ?? ''
-  if (!suffix.includes('Your working directory is {{cwd}}.')) {
-    throw new Error('the shipped persona suffix text was lost')
+  // DSH 0.2.0's template carried `suffix: Your working directory is {{cwd}}.`,
+  // so that line proves the rules survived. 0.2.1 removed both the line and the
+  // `cwd` prompt variable: the installer adds a suffix of its own, which must
+  // start with the rules and must not carry a reference the prompt renderer
+  // would reject. Either shape is accepted; the rules themselves are not
+  // optional.
+  if (!suffix.includes('Unica rules for this session:')) {
+    throw new Error('the session rules were lost from the persona suffix')
   }
   // A folded scalar that broke on indentation parses to different text, and the
   // rules would disappear without any error — hence checking the values. These

@@ -61,11 +61,10 @@ mkdirSync(TMP, { recursive: true })
 
 console.log(`platform under test: ${PLATFORM} (Node launcher on every host since 0.13)`)
 console.log('--- step: create a stub preset template')
-// The stub must carry the persona row the port rules attach to, with the exact
-// suffix text the installer asserts. Without it the installer refuses by design.
-// It is written in the SHAPE the shipped template has since 0.2.0 — a patch file
-// whose `- insert:` row holds the composition in `config.plugins` — because that
-// is the shape the installer unwraps.
+// The stub must carry the persona row the port rules attach to. It is written in
+// the 0.2.0 shape — a patch file whose `- insert:` row holds the composition in
+// `config.plugins`, with the suffix line the installer replaces. The 0.2.1+
+// shape, where that line is gone, is exercised further down.
 writeFileSync(
   STUB,
   [
@@ -230,6 +229,62 @@ execFileSync(process.execPath, ['tools/check-preset.mjs', patch], {
 
 console.log('--- step: DSH schema-checks the generated preset')
 execFileSync(process.execPath, ['tools/validate-preset.mjs', patch], {
+  cwd: PLUGIN,
+  stdio: 'inherit',
+  env: { ...process.env, DSH_INSTALL_ROOT: harnessRoot },
+})
+
+// DSH 0.2.1 removed the `cwd` prompt variable and the persona `suffix:` line it
+// fed from the shipped template. The installer has to attach the rules itself,
+// and must not leave a reference the prompt renderer would reject.
+console.log('--- step: 0.2.1+ template without a persona suffix')
+const STUB_021 = join(TMP, 'ci-standard-021.cordis.yml')
+const HOME_C = join(TMP, 'ci-dsh-preset-021')
+writeFileSync(
+  STUB_021,
+  [
+    '# Stub of the shipped `standard` preset template since DSH 0.2.1: the',
+    '# persona row carries a prefix and no suffix.',
+    '- insert:',
+    '    - id: preset-standard',
+    "      name: '@deepseek-ai/dsh-agent-preset'",
+    '      config:',
+    '        id: standard',
+    '        order: 1',
+    '        plugins:',
+    '          - id: persona',
+    "            name: '@deepseek-ai/dsh-persona'",
+    '            config:',
+    '              prefix: You are a coding agent powered by the {{model}} model.',
+    '          - id: skill-filesystem',
+    "            name: '@deepseek-ai/dsh-skill-filesystem'",
+    '',
+  ].join('\n'),
+  'utf8',
+)
+rmSync(HOME_C, { recursive: true, force: true })
+run(['install.mjs', '--dsh-home', HOME_C, '--target', 'preset', '--standard', STUB_021, '--platform', PLATFORM])
+const patch021 = join(HOME_C, PATCH_REL)
+const text021 = readFileSync(patch021, 'utf8')
+if (text021.includes('{{cwd}}')) {
+  throw new Error('the 0.2.1+ preset references {{cwd}}, which that DSH no longer registers')
+}
+for (const needle of ['Unica rules for this session:', 'executionToken', 'unica.check']) {
+  const ok = text021.includes(needle)
+  console.log(`    ${ok ? 'ok     ' : 'MISSING'} ${needle}`)
+  if (!ok) throw new Error(`the 0.2.1+ preset lost ${needle}`)
+}
+execFileSync(process.execPath, ['tools/check-preset.mjs', patch021], {
+  cwd: PLUGIN,
+  stdio: 'inherit',
+  env: { ...process.env, DSH_INSTALL_ROOT: harnessRoot },
+})
+execFileSync(process.execPath, ['tools/verify-install.mjs', HOME_C, 'web'], {
+  cwd: PLUGIN,
+  stdio: 'inherit',
+  env: { ...process.env, DSH_INSTALL_ROOT: harnessRoot },
+})
+execFileSync(process.execPath, ['tools/validate-preset.mjs', patch021], {
   cwd: PLUGIN,
   stdio: 'inherit',
   env: { ...process.env, DSH_INSTALL_ROOT: harnessRoot },

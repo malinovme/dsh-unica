@@ -197,6 +197,69 @@ jobs:
           DSH_INSTALL_ROOT: /tmp/dsh-ci
         run: node tools/validate-preset.mjs /tmp/dsh-ci-preset/profiles/web/cordis.patch.yml
 
+      # DSH 0.2.1 removed the `cwd` prompt variable and the `suffix:` line it fed
+      # from the shipped persona row. The installer must attach the rules itself,
+      # and the result must not mention `{{cwd}}` — prompt rendering resolves
+      # every reference and throws on one that is not registered.
+      - name: Create a 0.2.1+ stub preset template
+        run: |
+          cat > /tmp/ci-standard-021.cordis.yml <<'YAML'
+          # Stub of the shipped `standard` preset template since DSH 0.2.1: the
+          # persona row carries a prefix and no suffix.
+          - insert:
+              - id: preset-standard
+                name: '@deepseek-ai/dsh-agent-preset'
+                config:
+                  id: standard
+                  order: 1
+                  plugins:
+                    - id: persona
+                      name: '@deepseek-ai/dsh-persona'
+                      config:
+                        prefix: You are a coding agent powered by the {{model}} model.
+                    - id: skill-filesystem
+                      name: '@deepseek-ai/dsh-skill-filesystem'
+          YAML
+
+      - name: Installer builds a preset for DSH 0.2.1+
+        working-directory: dsh-unica-plugin
+        run: |
+          node install.mjs --dsh-home /tmp/dsh-ci-preset-021 --target preset \
+            --standard /tmp/ci-standard-021.cordis.yml
+
+      - name: The 0.2.1+ preset keeps the rules and drops the dead cwd reference
+        run: |
+          patch=/tmp/dsh-ci-preset-021/profiles/web/cordis.patch.yml
+          if grep -Fq -- '{{cwd}}' "$patch"; then
+            echo "::error file=$patch::the preset references {{cwd}}, which DSH 0.2.1 removed" >&2
+            exit 1
+          fi
+          for needle in "Unica rules for this session:" "executionToken" "unica.check"; do
+            if ! grep -Fq -- "$needle" "$patch"; then
+              echo "::error file=$patch::missing '$needle' in the persona suffix" >&2
+              exit 1
+            fi
+          done
+          echo "rules kept without a cwd reference"
+
+      - name: 0.2.1+ preset parses and keeps the session rules
+        working-directory: dsh-unica-plugin
+        env:
+          DSH_INSTALL_ROOT: /tmp/dsh-ci
+        run: node tools/check-preset.mjs /tmp/dsh-ci-preset-021/profiles/web/cordis.patch.yml
+
+      - name: DSH composes the 0.2.1+ profile with the preset in it
+        working-directory: dsh-unica-plugin
+        env:
+          DSH_INSTALL_ROOT: /tmp/dsh-ci
+        run: node tools/verify-install.mjs /tmp/dsh-ci-preset-021 web
+
+      - name: DSH schema-checks the 0.2.1+ preset
+        working-directory: dsh-unica-plugin
+        env:
+          DSH_INSTALL_ROOT: /tmp/dsh-ci
+        run: node tools/validate-preset.mjs /tmp/dsh-ci-preset-021/profiles/web/cordis.patch.yml
+
       - name: Installer rejects an unsupported platform
         working-directory: dsh-unica-plugin
         run: |

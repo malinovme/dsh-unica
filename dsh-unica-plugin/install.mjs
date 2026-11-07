@@ -459,27 +459,104 @@ const PROFILE_BANNER = `# Unica for DeepSeek Harness — profile patch, maintain
  * followed instructions for a tool surface that no longer exists.
  */
 const PERSONA_ANCHOR = 'suffix: Your working directory is {{cwd}}.'
+
+/**
+ * The standing rules, without the working-directory line.
+ *
+ * DSH 0.2.0 registered a `cwd` prompt variable, and its shipped template carried
+ * `suffix: Your working directory is {{cwd}}.`; rewriting that line attached the
+ * rules to the persona row. DSH 0.2.1 removed both: the template has no suffix
+ * line, and `{{cwd}}` is no longer a registered variable — a leftover reference
+ * makes prompt rendering throw, because every `{{name}}` is resolved or the
+ * section fails. So the rules start here, and `applyPersonaRules` decides how to
+ * attach them to whatever persona row the installed DSH ships.
+ */
+const PORT_RULES = `Unica rules for this session:
+- Address work with \`at\` (\`<sourceSet>:<Kind>[.<Name>...]\`). There is no
+  \`cwd\` argument: the workspace comes from the session, and
+  \`unica.resolve\` names the available sets.
+- \`unica.apply\` plans before it writes. The call that carries \`at\` and
+  \`ops\` returns \`data.executionToken\` and changes nothing; calling it
+  again with only that token executes the saved plan.
+- \`unica.check\` runs every validator a node's kind owns. The per-kind
+  \`*.validate\` tools of earlier versions no longer exist.
+- Tool arguments are not described on the wire. What a node accepts is its
+  \`can\` list (\`unica.view\` with \`filter: {sections: ["can"]}\`), and a
+  refused call names the offending field in \`diagnostics[].message\`.
+  \`unica.docs\` searches 1C documentation, not tool contracts.
+- \`unica.search\` with \`corpus: "text"\` matches BSL code only; metadata
+  names live in \`corpus: "names"\`. An answer that returns a \`task\` must be
+  followed through \`unica.task.result\`, not repeated.
+- Runtime and build work may fetch an engine on first use, so the first such
+  call can need network and take noticeably longer than the rest.`
+
+/** The rules re-indented to sit under a `suffix:` key at `indent`. */
+function personaRules(indent) {
+  return PORT_RULES.split('\n')
+    .map((line) => (line.trim() === '' ? '' : indent + line))
+    .join('\n')
+}
+
+/** The 0.2.0 shape: the rules replace the working-directory line in place. */
 const PERSONA_SUFFIX = `suffix: >-
       Your working directory is {{cwd}}.
 
-      Unica rules for this session:
-      - Address work with \`at\` (\`<sourceSet>:<Kind>[.<Name>...]\`). There is no
-        \`cwd\` argument: the workspace comes from the session, and
-        \`unica.resolve\` names the available sets.
-      - \`unica.apply\` plans before it writes. The call that carries \`at\` and
-        \`ops\` returns \`data.executionToken\` and changes nothing; calling it
-        again with only that token executes the saved plan.
-      - \`unica.check\` runs every validator a node's kind owns. The per-kind
-        \`*.validate\` tools of earlier versions no longer exist.
-      - Tool arguments are not described on the wire. What a node accepts is its
-        \`can\` list (\`unica.view\` with \`filter: {sections: ["can"]}\`), and a
-        refused call names the offending field in \`diagnostics[].message\`.
-        \`unica.docs\` searches 1C documentation, not tool contracts.
-      - \`unica.search\` with \`corpus: "text"\` matches BSL code only; metadata
-        names live in \`corpus: "names"\`. An answer that returns a \`task\` must be
-        followed through \`unica.task.result\`, not repeated.
-      - Runtime and build work may fetch an engine on first use, so the first such
-        call can need network and take noticeably longer than the rest.`
+${personaRules('      ')}`
+
+/**
+ * Attaches the port rules to the persona row of the shipped template.
+ *
+ * Two template shapes exist, and only the 0.2.0 one can be recognised by text:
+ * it carries the working-directory suffix line, which is replaced. Since 0.2.1
+ * the persona row has a `prefix` and no `suffix`, so the rules are added as a
+ * `suffix:` key beside it — the row still declares that field, which is what
+ * makes the rules permanent for the session instead of only while a skill
+ * happens to be loaded.
+ *
+ * The new block is literal (`|`), not folded (`>-`): the rules are a list, and a
+ * folded scalar would join every bullet into one paragraph.
+ *
+ * @param standardYaml - the shipped template, as top-level rows at 2-space indent
+ * @returns the template with the rules in place
+ */
+function applyPersonaRules(standardYaml) {
+  if (standardYaml.includes(PERSONA_ANCHOR)) return standardYaml.replace(PERSONA_ANCHOR, PERSONA_SUFFIX)
+
+  const lines = standardYaml.split('\n')
+  const personaAt = lines.findIndex((line) => /^- id: persona$/.test(line))
+  if (personaAt === -1) {
+    throw new Error('the standard composition has no persona row; the Unica rules could not be made permanent')
+  }
+  const nextRow = lines.findIndex((line, i) => i > personaAt && /^- id: \S/.test(line))
+  const limit = nextRow === -1 ? lines.length : nextRow
+
+  const prefixPattern = /^\s+prefix: You are a coding agent powered by the \{\{model\}\} model\.\s*$/
+  const prefixAt = lines.findIndex((line, i) => i > personaAt && i < limit && prefixPattern.test(line))
+  if (prefixAt === -1) {
+    throw new Error(
+      'the standard composition has neither the 0.2.0 persona suffix nor the 0.2.1 persona prefix row; ' +
+        'the Unica rules could not be made permanent. Re-check the template before installing.',
+    )
+  }
+  const indent = lines[prefixAt].match(/^(\s*)/)[1]
+
+  // A template that ever ships both shapes is rewritten, not extended: the row
+  // registers one suffix section, and two would collide.
+  const suffixAt = lines.findIndex((line, i) => i > personaAt && i < limit && line.startsWith(`${indent}suffix:`))
+  if (suffixAt !== -1) {
+    let after = suffixAt + 1
+    while (after < lines.length) {
+      const line = lines[after]
+      if (line.trim() !== '' && line.match(/^(\s*)/)[1].length <= indent.length) break
+      after += 1
+    }
+    lines.splice(suffixAt, after - suffixAt)
+  }
+
+  const insertAfter = lines.findIndex((line, i) => i > personaAt && prefixPattern.test(line))
+  lines.splice(insertAfter + 1, 0, `${indent}suffix: |`, personaRules(`${indent}  `))
+  return lines.join('\n')
+}
 
 /**
  * The Web-GUI target. Web sessions are composed from an agent preset, and the
@@ -495,13 +572,7 @@ const PERSONA_SUFFIX = `suffix: >-
 function presetRow(standardYaml) {
   // Fail loud instead of shipping a preset whose standing rules were silently
   // dropped by an upstream edit to the template.
-  if (!standardYaml.includes(PERSONA_ANCHOR)) {
-    throw new Error(
-      `the standard composition no longer carries the expected persona suffix (${PERSONA_ANCHOR}); ` +
-        `the port rules would be lost. Re-check the template before installing.`,
-    )
-  }
-  const withRules = standardYaml.replace(PERSONA_ANCHOR, PERSONA_SUFFIX)
+  const withRules = applyPersonaRules(standardYaml)
 
   const mcpRow = `
 # ── added by dsh-plugin-unica ────────────────────────────────────────────────
