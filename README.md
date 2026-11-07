@@ -129,7 +129,7 @@ gh api -H "Accept: application/vnd.github.raw+json" repos/malinovme/dsh-unica/co
 репозитория. Чтобы закрепить версию, передайте её именно процессу `sh`:
 
 ```sh
-gh api -H "Accept: application/vnd.github.raw+json" repos/malinovme/dsh-unica/contents/install.sh | UNICA_VERSION=v0.15.0.2 sh
+gh api -H "Accept: application/vnd.github.raw+json" repos/malinovme/dsh-unica/contents/install.sh | UNICA_VERSION=v0.15.0.3 sh
 ```
 
 ```powershell
