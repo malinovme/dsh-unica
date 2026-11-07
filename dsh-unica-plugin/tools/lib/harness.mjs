@@ -121,9 +121,15 @@ export function harnessAsar() {
  */
 function openAsar(asar) {
   const fd = readFileSync(asar)
+  // The pickle header is [u32 4][u32 headerSize][u32 payloadSize][u32 jsonSize]
+  // followed by the JSON and padding to a 4-byte boundary. File offsets are
+  // relative to the END OF THE PICKLE, i.e. 8 + headerSize — not to the end of
+  // the JSON: the padding is real, and skipping it shifts every extracted byte.
+  const headerSize = fd.readUInt32LE(4)
   const jsonSize = fd.readUInt32LE(12)
+  if (headerSize < jsonSize + 8) throw new Error(`invalid asar header in ${asar}: headerSize ${headerSize} < jsonSize ${jsonSize} + 8`)
   const header = JSON.parse(fd.subarray(16, 16 + jsonSize).toString('utf8'))
-  return { fd, header, base: 16 + jsonSize }
+  return { fd, header, base: 8 + headerSize }
 }
 
 /** Resolves `a/b/c` inside an asar tree to its file entry, or `undefined`. */
@@ -158,6 +164,21 @@ export function readAsarFile(internal, bundle = harnessAsar()) {
   const offset = Number(entry.offset)
   const size = Number(entry.size)
   return opened.fd.subarray(opened.base + offset, opened.base + offset + size)
+}
+
+/**
+ * Names of the files (not directories) directly inside a bundle directory.
+ *
+ * @param internal - directory path inside the archive
+ * @returns file names, or an empty list without a bundle
+ */
+export function asarDirectoryFiles(internal, bundle = harnessAsar()) {
+  if (bundle === undefined) return []
+  const node = asarNode(openAsar(bundle.asar).header, internal)
+  if (node?.files === undefined) return []
+  return Object.entries(node.files)
+    .filter(([, value]) => value.files === undefined)
+    .map(([name]) => name)
 }
 
 /**

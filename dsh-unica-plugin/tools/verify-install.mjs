@@ -20,12 +20,12 @@
 // `@deepseek-ai/dsh` lives in the DSH installation rather than in this
 // repository, so the harness has to be locatable: DSH_INSTALL_ROOT, a
 // `node_modules/.bin` of the harness on PATH, or the Desktop app's own bundle.
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { loadYaml, yamlWithJsTag } from './lib/yaml.mjs'
-import { harnessAsar, harnessRoots, materializeHarness } from './lib/harness.mjs'
+import { asarDirectoryFiles, harnessAsar, harnessRoots, materializeHarness } from './lib/harness.mjs'
 
 const argv = process.argv.slice(2)
 const positional = argv.filter((a) => !a.startsWith('--'))
@@ -54,12 +54,30 @@ function harnessEntry(relative) {
   return { fromBundle: false, path: join(harnessNodeModules, '@deepseek-ai', relative) }
 }
 
+/**
+ * Chunk file names of the dump-config entry point.
+ *
+ * DSH names these `dump-config-<hash>.js`, and the hash changes between builds,
+ * so the name is discovered instead of pinned: a stale literal made this tool
+ * fail on every DSH release after the one it was written against.
+ */
+function dumpConfigChunks() {
+  const isCandidate = (name) => /^dump-config-[^/]+\.js$/.test(name) && !name.startsWith('dump-config-schema-')
+  if (desktopBundle !== undefined) {
+    return asarDirectoryFiles('dsh/node_modules/@deepseek-ai/dsh/lib', desktopBundle).filter(isCandidate)
+  }
+  const dir = join(harnessNodeModules, '@deepseek-ai', 'dsh', 'lib')
+  return existsSync(dir) ? readdirSync(dir).filter(isCandidate) : []
+}
+
 let materialized
 /** Copies the bundle's composition modules out of the asar, once. */
 function materialize() {
   if (materialized === undefined) {
     const dir = join(tmpdir(), `dsh-verify-${process.pid}`)
-    materialized = materializeHarness('dsh/node_modules/@deepseek-ai/dsh/lib/dump-config-crgOY3tW.js', dir, desktopBundle)
+    const candidates = dumpConfigChunks()
+    if (candidates.length === 0) throw new Error('the DSH installation carries no dump-config entry point')
+    materialized = materializeHarness(`dsh/node_modules/@deepseek-ai/dsh/lib/${candidates[0]}`, dir, desktopBundle)
     console.log(`desktop     : ${desktopBundle.asar}`)
     console.log(`extracted   : ${materialized.packages.length} packages -> ${dirname(materialized.entry)}`)
   }
@@ -78,9 +96,24 @@ function materialize() {
  */
 async function dumpConfig(defaultOnly) {
   process.env.DSH_HOME = dshHome
-  const source = harnessEntry(join('dsh', 'lib', 'dump-config-crgOY3tW.js'))
-  const modulePath = source.fromBundle ? materialize() : source.path
-  const { runDumpConfig } = await import(pathToFileURL(modulePath).href)
+  const modulePath = desktopBundle !== undefined ? materialize() : harnessEntry('dsh/lib').path
+  const candidates =
+    desktopBundle !== undefined
+      ? dumpConfigChunks().map((name) => join(dirname(modulePath), name))
+      : dumpConfigChunks().map((name) => join(modulePath, name))
+  let runDumpConfig
+  for (const candidate of candidates) {
+    try {
+      const loaded = await import(pathToFileURL(candidate).href)
+      if (typeof loaded.runDumpConfig === 'function') {
+        runDumpConfig = loaded.runDumpConfig
+        break
+      }
+    } catch {
+      /* a sibling chunk that is not the entry point */
+    }
+  }
+  if (runDumpConfig === undefined) throw new Error('no dump-config chunk exports runDumpConfig')
   const chunks = []
   const write = process.stdout.write.bind(process.stdout)
   process.stdout.write = (chunk, ...rest) => {
@@ -156,7 +189,7 @@ if (isPresetProfile) {
     }
   }
 }
-requireRow('mcp-unica', 'the MCP bridge row is missing from the profile')
+requireRow('unica-native', 'the native bridge row is missing from the profile')
 requireRow('skill-filesystem-unica', 'the bundled skill root is missing from the profile')
 
 if (failed > 0) {

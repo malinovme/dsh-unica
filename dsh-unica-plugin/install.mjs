@@ -2,7 +2,7 @@
 //
 //   node install.mjs [--dsh-home <path>] [--target preset|profile|both] [--dry-run]
 //                    [--profile <name>] [--platform win32|darwin|linux]
-//                    [--cache-dir <path>] [--workspace <path>]
+//                    [--cache-dir <path>] [--verify-cwd <path>]
 //                    [--standard <composition.patch.yml>]
 //
 // `--standard` builds the preset from a given composition instead of the shipped
@@ -13,9 +13,9 @@
 // `$DSH_HOME/unica`. On Windows it is the escape hatch for a `$DSH_HOME` whose
 // directory mask refuses the server's daemon state; see the note on CACHE_DIR.
 //
-// `--workspace` pins the directory the MCP server treats as the 1C project. Unica
-// reads its workspace from the directory it is started in, so without the pin a
-// reconnect can point it at the DSH profile; see the note on WORKSPACE_ARG.
+// `--verify-cwd` picks the directory the `--verify` self-test runs in. The bridge
+// itself has no workspace pin: every call resolves the directory from its own
+// session, which is the whole point of the native mode.
 //
 // Why an installer instead of a static tree: cordis patch files and preset
 // compositions support `!!js` expressions but have no plugin-root interpolation,
@@ -36,10 +36,10 @@
 // preset left there is invisible to 0.2.0, which is exactly the failure this
 // installer previously produced.
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { spawn } from 'node:child_process'
-import { dirname, join, resolve, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { basename, dirname, join, resolve, sep } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { harnessAsar, harnessRoots, readAsarFile } from './tools/lib/harness.mjs'
 
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)))
@@ -54,7 +54,22 @@ function arg(name, fallback) {
 }
 const DRY_RUN = process.argv.includes('--dry-run')
 const VERIFY = process.argv.includes('--verify')
-const DSH_HOME = resolve(arg('dsh-home', process.env.DSH_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.dsh')))
+/** Resolve symlinks in the longest existing prefix (macOS `/tmp` is one). */
+function canonicalPath(value) {
+  let current = resolve(value)
+  const tail = []
+  for (;;) {
+    try {
+      return join(realpathSync.native(current), ...tail.reverse())
+    } catch {
+      const parent = dirname(current)
+      if (parent === current) return resolve(value)
+      tail.push(basename(current))
+      current = parent
+    }
+  }
+}
+const DSH_HOME = canonicalPath(arg('dsh-home', process.env.DSH_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.dsh')))
 const TARGET = arg('target', 'preset')
 // Each target defaults to the profile it belongs to; an explicit --profile wins
 // for both. Web is the only profile served by presets, and headless is where a
@@ -64,7 +79,7 @@ const PRESET_PROFILE = PROFILE_ARG ?? 'web'
 const PATCH_PROFILE = PROFILE_ARG ?? 'headless'
 
 /**
- * Picks how the MCP server is launched on the target platform.
+ * Picks how the bridge launches unica on the target platform.
  *
  * One shape for every host: the port's own Node launcher, which reads
  * `runtime-manifest.json`, fetches the runtime archive described there on first
@@ -104,7 +119,7 @@ const SKILLS = join(PLUGIN_ROOT, 'skills')
  * of the server's user daemon.
  *
  * `--cache-dir` moves them together, and on Windows it is sometimes the only way
- * to get a working MCP server. Unica 0.13 keeps a persistent user daemon whose
+ * to get a working unica daemon. Unica 0.13 keeps a persistent user daemon whose
  * state root it opens at startup, and a `$DSH_HOME` under the user profile can
  * carry a directory mask that refuses it: the server then dies with
  * `open daemon provider state root: Отказано в доступе. (os error 5)`, the MCP
@@ -116,19 +131,17 @@ const SKILLS = join(PLUGIN_ROOT, 'skills')
 const CACHE_ARG = arg('cache-dir', undefined)
 
 /**
- * `--workspace` pins the directory the MCP server treats as the 1C project.
+ * `--verify-cwd` selects the directory the `--verify` self-test asks unica about.
  *
- * Unica takes its workspace from the directory it is started in, and DSH restarts
- * a dropped server from the profile directory, so without a pin a reconnect can
- * silently point the tools at `$DSH_HOME/profiles/<profile>`. The launcher honours
- * `UNICA_WORKSPACE_ROOT`, so the installer writes it into the same env block.
+ * The bridge has no workspace pin: each call resolves the directory from its own
+ * session. The flag only gives the check a concrete project to look at.
  */
-const WORKSPACE_ARG = arg('workspace', undefined)
-const WORKSPACE = WORKSPACE_ARG === undefined ? undefined : resolve(WORKSPACE_ARG)
+const VERIFY_CWD_ARG = arg('verify-cwd', arg('workspace', undefined))
+const VERIFY_CWD = VERIFY_CWD_ARG === undefined ? canonicalPath(process.cwd()) : canonicalPath(VERIFY_CWD_ARG)
 
 /** Where the launcher keeps the runtime and the provider state. */
 function cachePaths(cacheDir) {
-  const root = cacheDir === undefined ? DSH_HOME : resolve(cacheDir)
+  const root = cacheDir === undefined ? DSH_HOME : canonicalPath(cacheDir)
   return cacheDir === undefined
     ? { runtimes: join(root, 'unica', 'runtimes'), state: join(root, 'unica', 'provider-state') }
     : { runtimes: join(root, 'runtimes'), state: join(root, 'provider-state') }
@@ -148,7 +161,7 @@ async function emit(path, content) {
 /** The runtime manifest this port ships: one descriptor per upstream target. */
 const RUNTIME_MANIFEST = JSON.parse(readFileSync(join(PLUGIN_ROOT, 'runtime-manifest.json'), 'utf8'))
 
-/** How long the MCP handshake is given when the runtime is already cached. */
+/** How long the self-test is given when the runtime is already cached. */
 const SMOKE_TIMEOUT_MS = 120_000
 /** The budget for a cold cache, which must download and verify the runtime first. */
 const COLD_TIMEOUT_MS = 1_800_000
@@ -170,123 +183,64 @@ function readyMarker() {
   return join(RUNTIMES, 'unica', `${RUNTIME_MANIFEST.artifacts.unica.version}--${core.asset.sha256}`, LAUNCH.target, '.ready.json')
 }
 
-/** Runs the bootstrap and gives up after `timeoutMs`, whatever it was doing. */
-function runBootstrap(timeoutMs, ask) {
+/**
+ * Starts unica through the same bridge the plugin uses and reads one node.
+ *
+ * This is the only check that answers the question a user actually has — "will
+ * the tools work?" — because everything before it only proves that files were
+ * written. The self-test spawns `host/selftest.js`, which speaks MCP to unica in
+ * the chosen directory, lists the catalogue and calls `unica.view {}`. A cold
+ * cache downloads the runtime inside this same run, so the budget follows the
+ * cache rather than a handshake.
+ *
+ * @returns `{ ok, tools, server, root, stderr, ms }`
+ */
+function nativeSelftest() {
+  const budget = existsSync(readyMarker()) ? SMOKE_TIMEOUT_MS : COLD_TIMEOUT_MS
+  if (budget === COLD_TIMEOUT_MS) {
+    console.log(`  runtime       : not cached yet — downloading and verifying it first, this can take minutes`)
+  }
+  const args = [join(PLUGIN_ROOT, 'host', 'selftest.js'), '--cwd', VERIFY_CWD]
   return new Promise((resolve) => {
-    const child = spawn(LAUNCH.command, LAUNCH.args, {
+    const child = spawn(process.execPath, args, {
       env: {
         ...process.env,
         UNICA_RUNTIME_CACHE_DIR: RUNTIMES,
         UNICA_PROVIDER_STATE_DIR: PROVIDER_STATE,
-        ...(WORKSPACE === undefined ? {} : { UNICA_WORKSPACE_ROOT: WORKSPACE }),
       },
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     })
     let stdout = ''
     let stderr = ''
     let settled = false
-    let exitCode
-    /** Complete JSON lines seen so far; a line can span several chunks. */
-    const lines = []
-    let pending = ''
     const started = Date.now()
     const finish = (result) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       child.kill()
-      resolve({ code: exitCode, ...result, stderr, ms: Date.now() - started })
+      resolve({ ...result, stderr, ms: result.ms ?? Date.now() - started })
     }
-    const timer = setTimeout(() => finish({ ok: false }), timeoutMs)
+    const timer = setTimeout(() => finish({ ok: false, stderr: `self-test did not finish in ${budget / 1000} s` }), budget)
     child.on('error', (error) => finish({ ok: false, stderr: String(error.message) }))
-    child.on('exit', (code) => {
-      exitCode = code
-      finish({ ok: false })
-    })
-    // A dead child turns these writes into EPIPE, and an unhandled `error` on a
-    // socket takes the whole installer down with it. The exit handler above has
-    // already recorded the failure, so the write error itself carries nothing.
-    child.stdin.on('error', () => {})
-    child.stdout.on('error', () => {})
-    const send = (message) => {
-      if (!child.stdin.destroyed && child.stdin.writable) child.stdin.write(`${JSON.stringify(message)}\n`)
-    }
-    // The server speaks only when spoken to: without this request it waits
-    // forever, and a probe that just listens would report a healthy server as
-    // dead after the full timeout.
-    send({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'dsh-plugin-unica-installer', version: '1' } },
-    })
     child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString()
-      // One JSON line can span chunks — the tool catalogue is a single line of
-      // over a megabyte — so only complete lines are handed on, and the tail
-      // waits for the rest of itself.
-      const text = pending + chunk.toString()
-      const parts = text.split('\n')
-      pending = parts.pop() ?? ''
-      lines.push(...parts.filter((l) => l.trim() !== ''))
-      if (ask !== undefined) ask(child, lines, finish, send)
+      stdout += chunk
     })
-  })
-}
-
-/**
- * Starts the MCP server exactly as the profile will and speaks to it.
- *
- * This is the only check that answers the question a user actually has — "will
- * the mode work?" — because everything before it only proves that files were
- * written. A profile can be composed perfectly and still carry a row whose
- * server never starts, and DSH then reports the whole preset as failed to load.
- *
- * A cold cache downloads the runtime inside this same run, so the budget follows
- * the cache rather than the handshake.
- *
- * @returns `{ ok, tools, server, stderr, ms }` — `ok` is false with `stderr`
- *   carrying the bootstrap's own message when the server never answered
- */
-function smokeTest() {
-  const budget = existsSync(readyMarker()) ? SMOKE_TIMEOUT_MS : COLD_TIMEOUT_MS
-  if (budget === COLD_TIMEOUT_MS) {
-    console.log(`  runtime       : not cached yet — downloading and verifying it first, this can take minutes`)
-  }
-  // The output arrives in many chunks, and the tool catalogue is a single line of
-  // over a megabyte, so the reader works on complete lines collected by
-  // `runBootstrap`. Every step below runs at most once.
-  let asked = false
-  let counted = false
-  let serverInfo
-  return runBootstrap(budget, (_child, lines, finish, send) => {
-    const lineWith = (id) => lines.find((l) => l.includes(`"id":${id}`))
-    if (!asked) {
-      const initialized = lineWith(1)
-      if (initialized === undefined) return
-      asked = true
-      let server
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    child.on('close', (code) => {
+      if (code !== 0) return finish({ ok: false })
+      const at = stdout.indexOf('{')
+      if (at === -1) return finish({ ok: false, stderr: 'self-test produced no report' })
+      let report
       try {
-        server = JSON.parse(initialized).result?.serverInfo
-      } catch {
-        /* answered, but not with a result: treated as not started */
+        report = JSON.parse(stdout.slice(at))
+      } catch (error) {
+        return finish({ ok: false, stderr: `unreadable self-test report: ${error.message}` })
       }
-      send({ jsonrpc: '2.0', method: 'notifications/initialized' })
-      send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })
-      serverInfo = server
-      return
-    }
-    if (counted) return
-    const listed = lineWith(2)
-    if (listed === undefined) return
-    counted = true
-    let tools
-    try {
-      tools = JSON.parse(listed).result?.tools?.length
-    } catch {
-      /* fall through with tools undefined */
-    }
-    finish({ ok: tools === EXPECTED_TOOLS, tools, server: serverInfo })
+      finish({ ok: report.ok === true, tools: report.tools, server: report.server, root: report.root })
+    })
   })
 }
 
@@ -295,9 +249,9 @@ function smokeTest() {
  *
  * The bootstrap writes lock and transaction files next to the runtime. When the
  * directory mask refuses that it exits within ~20 ms with
- * `unica-bootstrap: Отказано в доступе. (os error 5)`, the MCP client reports
- * `initial connection or tool synchronization failed`, and DSH shows the preset
- * as failed to load — a symptom three steps away from its cause.
+ * `unica-bootstrap: Отказано в доступе. (os error 5)`, the bridge reports no
+ * working tools, and the session looks like a broken install — a symptom three
+ * steps away from its cause.
  *
  * Timing is the reliable signal, not the wording: a cold cache spends minutes
  * downloading and says little, while a refusal is over before the process can
@@ -381,30 +335,27 @@ function removeTopLevelEntry(text, id) {
   return `${head}${tail === '' ? '' : `\n\n${tail.replace(/[ \t]*\n*$/, '')}`}\n`
 }
 
-/** The launch lines both targets share, at the given indentation. */
-function launchBlock(indent) {
-  const args = LAUNCH.args.map((a) => `${indent}  - '${a}'`).join('\n')
-  return [`${indent}command: '${LAUNCH.command}'`, `${indent}args:`, args].join('\n')
-}
+/** The bridge row name: a file URL, because the loader resolves module specifiers. */
+const NATIVE_ENTRY = pathToFileURL(join(PLUGIN_ROOT, 'host', 'index.js')).href
 
-/** The comment+env block both targets share, at the given indentation. */
-function envBlock(indent) {
-  const lines = [
-    `${indent}# The runtime cache and the daemon's state root. The launcher reads both`,
-    `${indent}# from the environment and would otherwise fall back to $DSH_HOME, so`,
-    `${indent}# pinning them keeps every session on one cache instead of two.`,
-    `${indent}UNICA_RUNTIME_CACHE_DIR: '${RUNTIMES}'`,
-    `${indent}UNICA_PROVIDER_STATE_DIR: '${PROVIDER_STATE}'`,
-  ]
-  if (WORKSPACE !== undefined) {
-    lines.push(
-      `${indent}# The workspace comes from the directory the server is started in, and a`,
-      `${indent}# reconnect starts it from the DSH profile instead. Pinning the root keeps`,
-      `${indent}# the project from silently changing on the next restart.`,
-      `${indent}UNICA_WORKSPACE_ROOT: '${WORKSPACE}'`,
-    )
-  }
-  return lines.join('\n')
+/**
+ * The bridge row both targets share, at column 0.
+ *
+ * The row points at this plugin's own `host/index.js`; the bridge resolves the
+ * working directory per call from the session, so there is no `cwd` here and no
+ * workspace pin anywhere in the profile.
+ */
+function nativeRow() {
+  return `- id: unica-native
+  name: '${NATIVE_ENTRY}'
+  config:
+    pluginRoot: '${PLUGIN_ROOT}'
+    runtimeCacheDir: '${RUNTIMES}'
+    providerStateDir: '${PROVIDER_STATE}'
+    maxProcesses: 4
+    idleMs: 600000
+    toolCallTimeoutMs: 600000
+`
 }
 
 /**
@@ -414,17 +365,7 @@ function envBlock(indent) {
  * instead of mounting a preset, so the rows go into the profile patch itself.
  */
 function profilePatchBody() {
-  return `- id: mcp-unica
-  name: '@deepseek-ai/dsh-mcp-client'
-  config:
-    serverName: unica
-    transport: stdio
-${launchBlock('    ')}
-    env:
-${envBlock('      ')}
-    failOnStartupError: true
-    toolCallTimeoutMs: 600000
-
+  return `${nativeRow()}
 - id: skill-filesystem-unica
   name: '@deepseek-ai/dsh-skill-filesystem'
   config:
@@ -574,23 +515,13 @@ function presetRow(standardYaml) {
   // dropped by an upstream edit to the template.
   const withRules = applyPersonaRules(standardYaml)
 
-  const mcpRow = `
+  const bridgeRows = `
 # ── added by dsh-plugin-unica ────────────────────────────────────────────────
-# The unica MCP bridge. Its eleven tools reach the model as
-# mcp__unica__<raw name with '.'->'_'>_<hash12>, e.g.
-# unica.view -> mcp__unica__unica_view_6f3a42290cc8.
-# The launched script fetches the runtime archive on first use.
-- id: mcp-unica
-  name: '@deepseek-ai/dsh-mcp-client'
-  config:
-    serverName: unica
-    transport: stdio
-${launchBlock('    ')}
-    env:
-${envBlock('      ')}
-    failOnStartupError: true
-    toolCallTimeoutMs: 600000
-
+# The native unica bridge. It exposes the same eleven tools as before
+# (mcp__unica__<raw name with '.'->'_'>_<hash12>), but every call resolves its
+# working directory from the DSH session and starts one unica process per
+# directory instead of pinning one project for the whole profile.
+${nativeRow()}
 # A dedicated skill root for the bundled unica skills. The standard preset
 # already mounts a skill-filesystem row, but with default roots only; this
 # sibling row adds the plugin's own catalog without disturbing the project and
@@ -604,7 +535,7 @@ ${envBlock('      ')}
       - '${SKILLS}'
     watch: false
 `
-  const composition = `${withRules.trimEnd()}\n${mcpRow}`.replace(/\s*$/, '')
+  const composition = `${withRules.trimEnd()}\n${bridgeRows}`.replace(/\s*$/, '')
 
   // The whole composition is nested as `config.plugins`, indented one level per
   // YAML level: 4 under the `- insert:` payload, then 6 under `plugins:`. A
@@ -618,7 +549,7 @@ ${envBlock('      ')}
     description: >-
       Разработка на 1С:Предприятии: метаданные, формы, роли, СКД и MXL,
       внешние обработки и отчёты, сборка и обновление ИБ, поиск и диагностика
-      BSL-кода. Полный стандартный набор инструментов плюс MCP-сервер unica.
+      BSL-кода. Полный стандартный набор инструментов плюс нативные инструменты unica.
     order: 50
     plugins:
 ${indentBlock(composition, '      ')}
@@ -821,7 +752,7 @@ function normalizePatch(text) {
  *
  * @returns a line for the install summary
  */
-async function patchProfile(profile, banner, block, label) {
+async function patchProfile(profile, banner, block, label, legacyIds = []) {
   const path = join(DSH_HOME, 'profiles', profile, 'cordis.patch.yml')
   const raw = existsSync(path) ? await readFile(path, 'utf8') : ''
   const { text: existing, eol } = normalizePatch(raw)
@@ -830,6 +761,20 @@ async function patchProfile(profile, banner, block, label) {
 
   let text = existing
   const notes = []
+  // A native-only release replaces the old MCP row: leaving it would register a
+  // second set of tools under the same names.
+  for (const legacy of legacyIds) {
+    const stripped = removeInsertChild(text, legacy)
+    if (stripped.removed > 0) {
+      text = stripped.text
+      notes.push(`${legacy}: removed the retired MCP row`)
+    }
+    const dropped = removeTopLevelEntry(text, legacy)
+    if (dropped !== undefined) {
+      text = dropped
+      notes.push(`${legacy}: removed the retired top-level row`)
+    }
+  }
   for (const id of ids) {
     const stripped = removeInsertChild(text, id)
     if (stripped.removed > 0) {
@@ -864,11 +809,13 @@ async function patchProfile(profile, banner, block, label) {
 async function applyProfile() {
   const summary = []
   if (TARGET === 'profile' || TARGET === 'both') {
-    summary.push(await patchProfile(PATCH_PROFILE, PROFILE_BANNER, profilePatchBody(), 'profile rows'))
+    summary.push(await patchProfile(PATCH_PROFILE, PROFILE_BANNER, profilePatchBody(), 'profile rows', ['mcp-unica']))
   }
   if (TARGET === 'preset' || TARGET === 'both') {
     const template = standardTemplate()
-    summary.push(await patchProfile(PRESET_PROFILE, PROFILE_BANNER, presetRow(templateRows(template.text)), 'agent preset'))
+    summary.push(
+      await patchProfile(PRESET_PROFILE, PROFILE_BANNER, presetRow(templateRows(template.text)), 'agent preset', ['mcp-unica']),
+    )
     summary.push(`  preset template: ${template.path}`)
   }
   return summary
@@ -881,14 +828,14 @@ async function main() {
 
   let summary = await applyProfile()
 
-  // `--verify` is what turns "the files were written" into "the mode will work".
-  // Only the handshake proves the last one, and a refused cache directory is the
+  // `--verify` is what turns "the files were written" into "the tools work".
+  // Only the self-test proves the last one, and a refused cache directory is the
   // one failure this tool can repair on its own: it is a property of where the
   // cache sits, not of anything the user chose.
   let verified
   let relocated = false
   if (VERIFY && !DRY_RUN) {
-    verified = await smokeTest()
+    verified = await nativeSelftest()
     // Only a refused cache is repaired, and the refusal is what tells us so: a
     // download that merely ran long must not move the cache behind the user's
     // back, or the runtime would be fetched twice.
@@ -899,7 +846,7 @@ async function main() {
       RUNTIMES = CACHE.runtimes
       PROVIDER_STATE = CACHE.state
       summary = await applyProfile()
-      verified = await smokeTest()
+      verified = await nativeSelftest()
       relocated = verified.ok
     }
   }
@@ -920,7 +867,7 @@ async function main() {
     console.log(
       `\nDSH composes the preset roster when it loads the profile, so the row is live as soon as the\n` +
         `DSH server restarts. Then start a NEW session on the preset "Unica 1C".\n` +
-        `Pass --verify to start the MCP server here and prove the mode will work.`,
+        `Pass --verify to start unica here and prove the tools will work.`,
     )
     return
   }
@@ -930,9 +877,12 @@ async function main() {
     return
   }
 
-  console.log('  mcp check     :')
+  console.log('  native check  :')
   if (verified.ok) {
-    console.log(`    ok      serverInfo ${verified.server?.name ?? '?'} ${verified.server?.version ?? '?'}, ${verified.tools} tools in ${verified.ms} ms`)
+    console.log(
+      `    ok      serverInfo ${verified.server?.name ?? '?'} ${verified.server?.version ?? '?'}, ${verified.tools} tools in ${verified.ms} ms` +
+        `${verified.root === undefined ? '' : `, workspace ${verified.root}`}`,
+    )
     if (relocated) {
       console.log(
         `    note    the default cache location refused the bootstrap, so this install uses ${dirname(RUNTIMES)}.\n` +
@@ -946,8 +896,8 @@ async function main() {
     return
   }
 
-  console.log(`    FAIL    the MCP server did not answer within ${SMOKE_TIMEOUT_MS / 1000} s`)
-  if (verified.stderr.trim() !== '') console.log(`            bootstrap said: ${verified.stderr.trim().split('\n').at(-1)}`)
+  console.log(`    FAIL    unica did not answer within ${SMOKE_TIMEOUT_MS / 1000} s`)
+  if (verified.stderr.trim() !== '') console.log(`            bridge said: ${verified.stderr.trim().split('\n').at(-1)}`)
   console.log(
     `\nThe profile was still patched, and DSH will report the preset as failed to load until this is\n` +
       `fixed — the picker hides such presets, so it would look like the install did nothing.\n` +

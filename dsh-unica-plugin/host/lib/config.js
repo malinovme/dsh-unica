@@ -1,5 +1,6 @@
+import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /** The plugin root (`dsh-unica-plugin/`) that ships `bootstrap/launch.mjs`. */
@@ -17,11 +18,33 @@ const DEFAULTS = {
   toolCallTimeoutMs: 10 * 60 * 1000,
 }
 
-/** Expand a leading `~` and make the path absolute. */
+/**
+ * Resolve symlinks in the longest existing prefix.
+ *
+ * unica refuses a state root whose path still carries a symlink (macOS `/tmp`
+ * is the common one): the daemon dies with `open daemon provider state root:
+ * Not a directory`. Canonicalizing before the path reaches unica avoids it.
+ */
+export function canonicalPath(value) {
+  let current = resolve(value)
+  const tail = []
+  for (;;) {
+    try {
+      return join(realpathSync.native(current), ...tail.reverse())
+    } catch {
+      const parent = dirname(current)
+      if (parent === current) return resolve(value)
+      tail.push(basename(current))
+      current = parent
+    }
+  }
+}
+
+/** Expand a leading `~` and make the path absolute and symlink-free. */
 export function expandPath(value) {
   if (typeof value !== 'string' || value.length === 0) return undefined
   const expanded = value === '~' ? homedir() : value.startsWith('~/') ? join(homedir(), value.slice(2)) : value
-  return resolve(expanded)
+  return canonicalPath(expanded)
 }
 
 function positiveInteger(value, fallback, field) {

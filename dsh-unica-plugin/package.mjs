@@ -47,9 +47,16 @@ const files = []
 for await (const f of walk(PLUGIN_ROOT)) files.push(f)
 files.sort((a, b) => a.rel.localeCompare(b.rel))
 
-// An archive that cannot start its MCP server is worse than no archive, so prove
-// the two files the launcher needs are in it instead of assuming.
-for (const required of ['install.mjs', 'bootstrap/launch.mjs', 'runtime-manifest.json', 'tool-map.json']) {
+// An archive that cannot start its bridge is worse than no archive, so prove the
+// files the launcher and the Host plugin need are in it instead of assuming.
+for (const required of [
+  'install.mjs',
+  'bootstrap/launch.mjs',
+  'host/index.js',
+  'host/selftest.js',
+  'runtime-manifest.json',
+  'tool-map.json',
+]) {
   if (!files.some((f) => f.rel === required)) throw new Error(`refusing to package: ${required} is missing`)
 }
 
@@ -75,7 +82,7 @@ const manifest = {
   uncompressedBytes: raw,
   version: metadata.version,
   upstreamVersion: metadata.unica?.upstreamVersion,
-  mcpTools: metadata.unica?.mcpTools,
+  tools: metadata.unica?.tools,
   skills: metadata.unica?.skills,
   fileCount: files.length,
   install: 'unpack, then: node install.mjs [--target preset|profile|both] [--verify]',

@@ -134,10 +134,11 @@ jobs:
             "plugins:" \
             "id: persona" \
             "id: skill-filesystem" \
-            "id: mcp-unica" \
+            "id: unica-native" \
             "id: skill-filesystem-unica" \
-            "serverName: unica" \
-            "UNICA_PROVIDER_STATE_DIR"
+            "host/index.js" \
+            "pluginRoot:" \
+            "providerStateDir:"
           do
             if ! grep -Fq -- "$needle" "$patch"; then
               echo "::error file=$patch::missing '$needle' in the generated patch"

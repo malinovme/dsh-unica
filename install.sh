@@ -14,7 +14,7 @@
 #   UNICA_PROFILE=web           DSH profile to patch (default: desktop if the
 #                               Desktop app has one, otherwise web)
 #   UNICA_DSH_HOME=~/.dsh       DSH home; normally taken from the environment
-#   UNICA_VERIFY=0              skip the MCP handshake check after installing
+#   UNICA_VERIFY=0              skip the native self-test after installing
 #   UNICA_TARGET=preset         preset | profile | both
 #   UNICA_BASE_URL=http://...   release download base: a mirror, or a local
 #                               directory served for the tests; matches the

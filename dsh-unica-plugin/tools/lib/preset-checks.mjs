@@ -90,7 +90,7 @@ export function checkPreset(path, searchDirs = [], kind = 'patch') {
   // rules and the other two rows are injected. The rest of the composition is
   // copied from the shipped template, and requiring a specific set of template
   // rows would fail this check every time upstream edits its own preset.
-  for (const id of ['persona', 'mcp-unica', 'skill-filesystem-unica']) {
+  for (const id of ['persona', 'unica-native', 'skill-filesystem-unica']) {
     if (!ids.includes(id)) throw new Error(`row missing from the preset: ${id}`)
   }
   // The registry's own rule for a composition, mirrored here because it is the
@@ -133,22 +133,27 @@ export function checkPreset(path, searchDirs = [], kind = 'patch') {
     if (!suffix.includes(needle)) throw new Error(`session rule lost from the persona suffix: ${needle}`)
   }
 
-  const mcp = rows.find((r) => r.id === 'mcp-unica')
-  const args = mcp?.config?.args
-  if (!Array.isArray(args) || args.length === 0) throw new Error('the mcp row lost its args')
-  // Every host launches the port's Node script the same way — `node launch.mjs
-  // <root>` — because upstream 0.13 stopped publishing per-platform bootstrap
-  // binaries. The argument list still has to prove the plugin root reached the
-  // command, or the launcher cannot find its runtime manifest.
-  const command = mcp?.config?.command ?? ''
-  const carriesRoot = command === 'node' && args.some((a) => a.endsWith('launch.mjs'))
-  if (!carriesRoot) {
-    throw new Error(
-      `the mcp row does not launch the Node launcher: command="${command}" args=${JSON.stringify(args)}`,
-    )
+  const bridge = rows.find((r) => r.id === 'unica-native')
+  if (bridge === undefined) throw new Error('row missing from the preset: unica-native')
+  // The row must mount this plugin's own Host bridge. A package specifier could
+  // resolve to some other version; the installer bakes a file URL.
+  const bridgeEntry = typeof bridge.name === 'string' ? bridge.name : ''
+  if (!bridgeEntry.startsWith('file://') || !bridgeEntry.endsWith('/host/index.js')) {
+    throw new Error(`the native row does not point at the bridge entry: name="${bridgeEntry}"`)
   }
-  if (!args.some((a) => args.indexOf(a) > args.findIndex((x) => x.endsWith('launch.mjs')))) {
-    throw new Error(`the launcher is not given the plugin root: args=${JSON.stringify(args)}`)
+  // The bridge needs its plugin root and both writable directories explicitly:
+  // the DSH host process does not export them.
+  const pluginRoot = bridge?.config?.pluginRoot
+  const cacheDir = bridge?.config?.runtimeCacheDir
+  const stateDir = bridge?.config?.providerStateDir
+  for (const [field, value] of [
+    ['pluginRoot', pluginRoot],
+    ['runtimeCacheDir', cacheDir],
+    ['providerStateDir', stateDir],
+  ]) {
+    if (typeof value !== 'string' || value.length === 0) {
+      throw new Error(`the native row lost ${field}: ${JSON.stringify(bridge.config)}`)
+    }
   }
 
   // The bundled catalog has to reach the session, and it only does through this
@@ -159,5 +164,5 @@ export function checkPreset(path, searchDirs = [], kind = 'patch') {
     throw new Error(`the unica skill root is not mounted: customSkillDirs=${JSON.stringify(dirs)}`)
   }
 
-  return { rows: rows.length, ids, suffix, command, args, rowId, presetId, name }
+  return { rows: rows.length, ids, suffix, bridgeEntry, pluginRoot, cacheDir, stateDir, rowId, presetId, name }
 }

@@ -16,7 +16,7 @@
 #   -Profile web         DSH profile to patch (default: desktop if the Desktop
 #                        app has one, otherwise web)
 #   -DshHome C:\...\.dsh DSH home; normally taken from the environment
-#   -NoVerify            skip the MCP handshake check after installing
+#   -NoVerify            skip the native self-test after installing
 #   -Target preset       preset | profile | both
 [CmdletBinding()]
 param(

@@ -112,10 +112,11 @@ const needles = [
   'plugins:',
   'id: persona',
   'id: skill-filesystem',
-  'id: mcp-unica',
+  'id: unica-native',
   'id: skill-filesystem-unica',
-  'serverName: unica',
-  'UNICA_PROVIDER_STATE_DIR',
+  'host/index.js',
+  'pluginRoot:',
+  'providerStateDir:',
   // The session rules must reach the persona suffix, not just the skill files.
   // These are the 0.13 rules: the text they replaced named `role.edit`,
   // `meta.add`, `role.compile` and `v8-runner`, which no longer exist.
@@ -123,8 +124,6 @@ const needles = [
   'unica.check',
   'unica.docs',
   'engine on first use',
-  // The launch row must reach the port's launcher, which fetches the runtime.
-  'bootstrap\\launch.mjs',
 ]
 let missing = 0
 for (const needle of needles) {
@@ -161,8 +160,9 @@ run(['tools/validate-workflow.mjs', harnessNM], { realEnv: true })
 // The migration path is where this broke once already: an install left by the
 // 0.1.x layout keeps its rows inside a top-level `- insert:` list, and a
 // new-format run that did not recognise that block appended a SECOND row with
-// the same id — two `mcp-unica` tasks, which DSH refuses to load. The old layout
-// is reproduced here because CI cannot regenerate one.
+// the same id — two rows DSH refuses to load. The old layout is reproduced here
+// because CI cannot regenerate one; the native-only installer must replace the
+// retired `mcp-unica` row instead of leaving both sources of the same tools.
 console.log('--- step: migrating an install written in the retired layout')
 const OLD_HOME = join(TMP, 'ci-dsh-old')
 rmSync(OLD_HOME, { recursive: true, force: true })
@@ -192,11 +192,14 @@ writeFileSync(
 run(['install.mjs', '--dsh-home', OLD_HOME, '--target', 'profile', '--standard', STUB, '--platform', PLATFORM])
 const migrated = readFileSync(join(OLD_HOME, 'profiles', 'headless', 'cordis.patch.yml'), 'utf8')
 const countRow = (id) => migrated.split('\n').filter((line) => new RegExp(`^\\s*- id: ${id}$`).test(line)).length
-for (const id of ['mcp-unica', 'skill-filesystem-unica']) {
+for (const id of ['unica-native', 'skill-filesystem-unica']) {
   const seen = countRow(id)
   console.log(`    ${seen === 1 ? 'ok     ' : 'BROKEN '} ${seen} row(s) with id ${id} after migration`)
   if (seen !== 1) throw new Error(`migrating the retired layout left ${seen} rows with id ${id}`)
 }
+const retired = countRow('mcp-unica')
+console.log(`    ${retired === 0 ? 'ok     ' : 'BROKEN '} ${retired} retired mcp-unica row(s) after migration`)
+if (retired !== 0) throw new Error(`the retired mcp-unica row survived the migration (${retired})`)
 // One insert list, holding exactly the two rows the installer owns: the migrated
 // file must not accumulate a block per run, and nothing may sit at top level.
 const inserts = migrated.split('\n').filter((line) => line === '- insert:').length
@@ -300,16 +303,15 @@ try {
 if (!rejected) throw new Error('an unsupported platform did not produce a non-zero exit')
 console.log('    ok      unsupported platform rejected')
 
-// Proves the written patch launches the port's Node launcher and not some
-// leftover shape. Since 0.13 every host uses the same branch — upstream stopped
-// publishing per-platform bootstrap binaries — so there is one expectation, and
-// it is read from the patch the step above writes for real.
+// Proves the written patch mounts the native bridge and not some leftover shape.
+// The row points at this plugin's Host entry with a file URL — the portable form
+// on Windows too — and carries the plugin root the bridge needs.
 const patchText = readFileSync(patch, 'utf8')
-const usesNode = /^\s*command: 'node'$/m.test(patchText)
-const usesLauncher = /launch\.mjs'/m.test(patchText)
-if (!usesNode || !usesLauncher) {
-  throw new Error(`an install on ${PLATFORM} did not launch the Node launcher (command: node: ${usesNode}, launch.mjs: ${usesLauncher})`)
+const usesFileUrl = /^\s*name: 'file:\/\/.*\/host\/index\.js'$/m.test(patchText)
+const carriesRoot = /^\s*pluginRoot: '/m.test(patchText)
+if (!usesFileUrl || !carriesRoot) {
+  throw new Error(`an install on ${PLATFORM} did not mount the native bridge (file URL: ${usesFileUrl}, plugin root: ${carriesRoot})`)
 }
-console.log(`    ok      launch shape is node launch.mjs as expected for ${PLATFORM}`)
+console.log(`    ok      native bridge row points at host/index.js as expected for ${PLATFORM}`)
 
 console.log('\nCI job dry-run passed: every installer step behaves as the workflow expects')

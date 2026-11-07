@@ -162,6 +162,8 @@ for (const child of checked.plugins) {
   // `cordis:group` is the composition's own grouping marker, carried over from
   // the shipped template; it is not a package and has nothing to resolve.
   if (name.startsWith('cordis:')) continue
+  // The native bridge is a file URL baked by the installer, not a package.
+  if (name.startsWith('file:')) continue
   // Subpath specifiers (`@deepseek-ai/dsh-plugin-manager/tools`) resolve as a
   // package plus an export path; only the package part decides availability.
   const pkg = name.startsWith('@') ? name.split('/').slice(0, 2).join('/') : name.split('/')[0]
@@ -177,7 +179,7 @@ for (const m of missing) console.log(`  MISSING : ${m}`)
 
 // DSH refuses a preset whose modules do not load, so this is fatal for the rows
 // the port itself injects and a warning for anything else.
-const portRows = ['mcp-unica', 'skill-filesystem-unica', 'persona', 'skill-filesystem']
+const portRows = ['unica-native', 'skill-filesystem-unica', 'persona', 'skill-filesystem']
 const fatal = missing.filter((m) => portRows.some((id) => m.includes(`row ${id})`)))
 if (fatal.length > 0) {
   console.error(`\n${fatal.length} row(s) the port depends on cannot resolve`)
