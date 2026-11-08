@@ -66,6 +66,7 @@ MCP-строки**, рабочий каталог берётся из сесси
 | [run-report.md](docs/run-report.md) | прогон сценария и его результаты |
 | [platform-findings.md](docs/platform-findings.md) | дефекты XML, найденные платформой, и прогон Vanessa |
 | [platform-investigation.md](docs/platform-investigation.md) | почему платформа не работала под DSH и что это дало |
+| [native-verification.md](docs/native-verification.md) | **инструкция проверки native-режима**: автотесты, живая приёмка на двух проектах, диагностика, откат |
 
 
 
@@ -356,7 +357,11 @@ node tools/check-tool-names.mjs   # все имена инструментов �
 node tools/build-runtime-manifest.mjs --check   # манифест артефактов не отстал от лока
 node tools/verify-bridge.mjs      # лаунчер: релей ответов и защита доставки
 node tools/ci-dryrun.mjs          # эмуляция CI-прогонов
+node host/selftest.js --cwd .     # сквозная проверка моста без DSH
 ```
+
+Как проверять живой режим в DSH (две сессии, две кодовые базы) — см.
+[инструкцию проверки](docs/native-verification.md).
 
 ## Обновление порта на новый апстрим
 

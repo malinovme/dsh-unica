@@ -135,6 +135,12 @@ node install.mjs --target preset --profile desktop --cache-dir D:\unica-cache
 такой вызов требует сети и заметно дольше остальных — это записано и в правила
 сессии.
 
+### Как проверить, что режим работает
+
+Коротко — `node install.mjs --verify` (поднимает unica и читает `unica.view {}`).
+Полная процедура, включая живую проверку на двух проектах в DSH, диагностику и
+откат — в [docs/native-verification.md](../docs/native-verification.md).
+
 ### Пространство имён инструментов
 
 Unica называет инструменты с точками (`unica.view`, `unica.apply`). Прежняя
