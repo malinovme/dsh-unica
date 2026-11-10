@@ -171,6 +171,41 @@ done
 
 ---
 
+
+## 3.5. Проверка записи и платформенных операций
+
+Сделано на rc.5 в проекте `DSH_Test2`; повторяется за 10 минут.
+
+**Метаданные (навык `meta-add`).** План → `executionToken` → исполнение → чтение:
+
+1. `unica.apply` с `object.create` даёт план и `executionToken`, на диске ничего не меняется.
+2. Повторный вызов только с токеном публикует изменения: появляются
+   `src/Catalogs/<Имя>.xml` и `Ext/ObjectModule.bsl`, объект виден в `unica.view`
+   и в `<ChildObjects>` корня.
+3. `unica.check` по объекту — `status: passed`, `validators: ["meta"]`.
+
+**Контракт типов изменился в rc.5.** Тип реквизита-числа теперь
+`{"kind": "number", "digits": 15, "fraction": 2, "sign": "any"}` —
+`decimal` с `precision`/`scale` больше не принимается. Навыки намеренно не
+хардкодят схему: перед вызовом читайте контракт операции по адресу
+`<узел>.Can.<операция>`, иначе ошибка будет `unsupported type kind` или
+`` `digits` must be an unsigned 32-bit integer ``.
+
+**Платформа (1С 8.3.27.2342, macOS arm64).**
+
+| Операция | Итог |
+|---|---|
+| `unica.run` `make` (`output: build/out/<Имя>.cf`) | ok, `.cf` собран |
+| `unica.run` `infobase.create` | ok, файловая база создана из исходников |
+| `unica.run` `push` **инкрементальный** (когда есть изменения) | **отказ** `provider_unavailable / credentials_rejected`: `the designer agent rejected the infobase user … user ''` — это открытый дефект апстрима ([#1536](https://github.com/IngvarConsulting/unica/issues/1536)), путь через designer-agent на macOS |
+| `unica.run` `push` с `{"full": true}` | **ok** — рабочий обход для того же изменения |
+| `unica.run` `download` (`state: database`) | отказ `platform export failed … platform log read error` — отдельный дефект окружения, лог `/Out` платформа не создала |
+
+Вывод: операции, идущие через `ibcmd` (`make`, `infobase.create`, полный `push`),
+работают; инкрементальный `push` и выгрузка из базы на этой машине упираются в
+дефекты апстрима/платформы, к мосту отношения не имеющие. Пока дефект не закрыт,
+для загрузки изменений используйте `push` с `full: true`.
+
 ## 4. Критерии приёмки
 
 | # | Проверка | Проходит, если |
