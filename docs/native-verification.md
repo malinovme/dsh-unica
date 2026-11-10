@@ -275,6 +275,57 @@ rc.5 нет — операции читаются из `Can`).
 корректен и платформой принимается, но файл читается хуже, чем выгрузка
 Конфигуратора.
 
+
+## 3.7. Расширения
+
+Проверено на rc.5: корень расширения, заимствование, сборка `.cfe`, установка в базу.
+
+**Корень расширения.** Канонической операции создания корня нет — он пишется
+файловыми средствами по навыку `cfe-init`, затем объявляется набором:
+
+```yaml
+source-set:
+  - name: main
+    type: CONFIGURATION
+    path: 'src'
+  - name: ext
+    type: EXTENSION
+    path: 'ext'
+```
+
+**Каталог расширения должен лежать вне корня родителя.** Навык предлагает
+`src/ext`, но на такой раскладке `object.borrow` отвечает
+`borrow parent must be a separate non-overlapping source root` — при том что
+`unica.check {}` вложенный набор принимает. Рабочая раскладка — `ext/` рядом с
+`src/`.
+
+**Заимствование.** `object.borrow` на корне расширения с `from` —
+проверенный адрес родителя. Результат виден в `data.borrowing`
+(`parentUuid`, `changedProperties`, `protectedOverrides`), а после исполнения
+`unica.view` показывает `belonging: borrowed`, `parentId`,
+`parentStatus: resolved` и `extends: "main:<Вид>.<Имя>"`.
+
+**Проверка и сборка.** `unica.check` на `ext:Configuration` даёт валидатор
+`cfe`; `unica.run make` с `{"extension": "ext"}` собирает `.cfe` и проверяет
+его платформой.
+
+**Установка в базу.** `push` по новому набору отказывает: у рабочей копии нет
+памяти о базе для этого набора, и выбор «взять из базы» или «перезаписать»
+принадлежит пользователю. После явного `{"force": true}` загружаются все
+наборы, а `unica.run extensions.list` подтверждает установку:
+
+```json
+{"name": "Расш1", "purpose": "customization", "active": true, "safeMode": true,
+ "unsafeActionProtection": true, "namePrefix": "Расш1_", "scope": "infobase"}
+```
+
+`1cv8 DESIGNER /CheckConfig` после установки — «Ошибок не обнаружено».
+
+**Чего нет на поверхности:** загрузка готового `.cfe` через `upload` недоступна
+в адаптере v8-runner 0.15 (известный пробел
+[#1246](https://github.com/IngvarConsulting/unica/issues/1246)); расширение
+попадает в базу только через `push` источников.
+
 ## 4. Критерии приёмки
 
 | # | Проверка | Проходит, если |
