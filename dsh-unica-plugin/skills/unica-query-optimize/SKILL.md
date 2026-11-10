@@ -11,12 +11,11 @@ description: "Оптимизация запросов 1С и СКД. Испол�
 - Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
 контракт каждой — `argsSchema`, `execution`, `previewRequired`,
 `dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
-при `implemented: true` используй опубликованную `argsSchema`; при
-`support.state: limited` разрешено только подмножество `support.supportedArgs`.
-При `support.state: unavailable` остановись; не выдумывай аргументов при
-`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
-затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
-вызовами. Не обходи контракт прямым runner-ом.
+используй опубликованную `argsSchema`; при `support.state: limited`
+разрешено только подмножество `support.supportedArgs`. Недоступной операции
+в словаре нет. Для плановой операции сначала проверь результат
+`dryRun: true`, затем исполняй запрос с `dryRun: false`. Preview
+не фиксирует входы между вызовами. Не обходи контракт прямым runner-ом.
 - Use `mcp__unica__unica_view_6f3a42290cc8 {}` if the source-set or format is unclear.
 - Do not call internal analyzer, standards, runtime, or package adapters directly. They are hidden behind MCP `unica`.
 
@@ -24,7 +23,7 @@ description: "Оптимизация запросов 1С и СКД. Испол�
 
 1. Extract the exact query text with `mcp__unica__unica_search_a8644a757dff` or `mcp__unica__unica_view_6f3a42290cc8` on the schema node.
 2. Inspect the execution context with `mcp__unica__unica_view_6f3a42290cc8` on the module node (its `Method` branch lists the methods): module, exported entry point, region, temporary table chain, and caller loop.
-3. Find callers with `mcp__unica__unica_search_a8644a757dff` by the method name when the query is inside reusable API, background jobs, event handlers, or suspected query-in-loop flow; a call graph is not on the v0.13 surface.
+3. Find callers with `mcp__unica__unica_view_6f3a42290cc8` at `<method>.Caller` when the query is inside reusable API, background jobs, event handlers, or suspected query-in-loop flow; `mcp__unica__unica_search_a8644a757dff` by the method name adds literal mentions.
 4. Run `mcp__unica__unica_check_6db7d2a7495f {at}` on the containing module when analyzer diagnostics can reveal unreachable code, unresolved calls, or type issues around the query. Do not pass a DCS `TemplatePath` as a diagnostic target; locate the BSL module that executes the query.
 5. Inspect `mcp__unica__unica_view_6f3a42290cc8` on the object node for both related modules, subscriptions, roles, functional options and the local registers, dimensions, resources, реквизиты, tabular sections, and indexes implied by the platform object type.
 6. Inspect DCS with `mcp__unica__unica_view_6f3a42290cc8` on the schema node when the query lives in a data composition schema.
@@ -87,7 +86,6 @@ description: "Оптимизация запросов 1С и СКД. Испол�
   "params": {
     "name": "mcp__unica__unica_view_6f3a42290cc8",
     "arguments": {
-      "cwd": "<workspace>",
       "at": "main:Report.Продажи.Template.ОсновнаяСхемаКомпоновкиДанных.DataSet"
     }
   }

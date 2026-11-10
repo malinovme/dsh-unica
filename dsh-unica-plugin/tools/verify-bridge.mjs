@@ -235,9 +235,12 @@ const pinnedRun = await converse({
   ],
 })
 const pinnedCwd = String(pinnedRun.find((m) => m.id === 2)?.result?.structuredContent?.data?.cwd ?? '')
+// Compare separator-insensitively: the check has to hold on POSIX as well, where
+// the pin directory is not a Windows path.
+const samePath = (a, b) => a.toLowerCase().replaceAll('\\', '/') === b.toLowerCase().replaceAll('\\', '/')
 check(
   'UNICA_WORKSPACE_ROOT replaces the inherited launch directory',
-  pinnedCwd.toLowerCase().replaceAll('/', '\\') === pinDir.toLowerCase(),
+  samePath(pinnedCwd, pinDir),
   `child cwd=${pinnedCwd}`,
 )
 await rm(pinDir, { recursive: true, force: true }).catch(() => {})

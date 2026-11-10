@@ -1,19 +1,19 @@
 {
   "schemaVersion": 2,
-  "pluginVersion": "0.15.0-rc.1",
+  "pluginVersion": "0.15.0-rc.5",
   "upstream": "https://github.com/IngvarConsulting/unica",
-  "tag": "v0.15.0-rc.1",
+  "tag": "v0.15.0-rc.5",
   "artifacts": {
     "unica": {
-      "version": "0.15.0-rc.1",
+      "version": "0.15.0-rc.5",
       "role": "core",
       "targets": {
         "darwin-arm64": {
           "asset": {
             "mediaType": "application/gzip",
             "name": "unica-runtime-darwin-arm64.tar.gz",
-            "sha256": "6126de3d5968788d40f307f025f7d9fd2dba51a0a6aaaea46355829fbc696396",
-            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.15.0-rc.1/unica-runtime-darwin-arm64.tar.gz"
+            "sha256": "448863feac7159166a150716355b3d0fbeddbf3d84e1dbec2c078efe3a0ea44c",
+            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.15.0-rc.5/unica-runtime-darwin-arm64.tar.gz"
           },
           "install": {
             "strategy": "archive"
@@ -23,12 +23,12 @@
             {
               "executable": true,
               "path": "bin/darwin-arm64/unica",
-              "sha256": "3b38b0dd1aec4178fbfb86584673e866167a2ad8bd921e9f5b4670e965efc609"
+              "sha256": "685a677a56b6aa3876e3093199abc258f5377c1bce92cf4656fe3c34bee6a8f6"
             },
             {
               "executable": false,
               "path": "third-party/manifest.json",
-              "sha256": "83bf8a590bf87a57a98be44124967c68dc95307dc17d496b5f0ef13ddbb0a3ee"
+              "sha256": "2dd3781dba9ad4a74ad9acdc321e036df2e579bca94afcb55faf1a423b3483c0"
             }
           ]
         },
@@ -36,8 +36,8 @@
           "asset": {
             "mediaType": "application/gzip",
             "name": "unica-runtime-linux-x64.tar.gz",
-            "sha256": "7e08ef4ba278346764488a06992cf80db3cdbb37b2debaf9bbcbacd54a8984de",
-            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.15.0-rc.1/unica-runtime-linux-x64.tar.gz"
+            "sha256": "95a37f097c1b06b02b6ee8520a9156244fe38f60eeda9e4df5e120010004913e",
+            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.15.0-rc.5/unica-runtime-linux-x64.tar.gz"
           },
           "install": {
             "strategy": "archive"
@@ -47,12 +47,12 @@
             {
               "executable": true,
               "path": "bin/linux-x64/unica",
-              "sha256": "944e5ee21410f38f07f65ac3edb0eee7622dbe2532951db890c89d453f920d27"
+              "sha256": "16ba9d7ee0023924a8714a66248663dbef43a85b10da3657ce898ae1db0c55e8"
             },
             {
               "executable": false,
               "path": "third-party/manifest.json",
-              "sha256": "2b4f48efce4f6d1575a2a3ddd7e9e06e7ce800ff7676b28761f59ab285a4b6b8"
+              "sha256": "6ac0580ecefc9932ebd2af4e3bafb21762d83f4b247d5e013cd532ab2426472e"
             }
           ]
         },
@@ -60,8 +60,8 @@
           "asset": {
             "mediaType": "application/gzip",
             "name": "unica-runtime-win-x64.tar.gz",
-            "sha256": "24bccb461062fca6db4355dabbe6ef400af2c6dc821c09c8b1b5b854e34ec80e",
-            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.15.0-rc.1/unica-runtime-win-x64.tar.gz"
+            "sha256": "bcd05e983f8e4e27578fa8c25915b9f850efa43f17599012f37e8862f43a8578",
+            "url": "https://github.com/IngvarConsulting/unica/releases/download/v0.15.0-rc.5/unica-runtime-win-x64.tar.gz"
           },
           "install": {
             "strategy": "archive"
@@ -71,12 +71,12 @@
             {
               "executable": true,
               "path": "bin/win-x64/unica.exe",
-              "sha256": "d846d6906c26bf78494db32f1caf7c4a9ad4fe4c55d45df65bd4082e22b0fd74"
+              "sha256": "c884c4d54f4b44c74f926e9bbc536eb8bd66046b5a3222ee75e4ca254a292908"
             },
             {
               "executable": false,
               "path": "third-party/manifest.json",
-              "sha256": "b145beb6d06983b1ee0b530758d6c05e8707206e5401201a8c1bf9815bb7fb6c"
+              "sha256": "c3646f8f9a41977f9105488c11b4d8ea823ae3e9261f06ca6651d678dd504133"
             }
           ]
         }

@@ -60,13 +60,19 @@ const toolMap = JSON.parse(await readFile(MAP_PATH, 'utf8'))
 // prefix could swallow part of it.
 const TOOL_KEYS = Object.keys(toolMap).sort((a, b) => b.length - a.length)
 
+/** File suffixes that end a dotted `unica.<word>` name which is not a tool. */
+const FILE_SUFFIXES = new Set(['toml', 'json', 'yaml', 'yml', 'md', 'xml', 'bsl', 'txt', 'cf', 'cfe', 'epf', 'erf', 'os'])
+
 /** Rewrites every mapped tool name, and reports any that are left unmapped. */
 function rewrite(text) {
   let out = text
   for (const raw of TOOL_KEYS) out = out.split(raw).join(toolMap[raw])
   // A name that still looks like a tool means the map is missing an entry, and
-  // shipping it would hand the model an instruction it cannot follow.
-  const leftovers = [...out.matchAll(/\bunica\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+/g)].map((m) => m[0])
+  // shipping it would hand the model an instruction it cannot follow. A file
+  // name such as `unica.local.toml` matches the same shape and is not a tool.
+  const leftovers = [...out.matchAll(/\bunica\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+/g)]
+    .map((m) => m[0])
+    .filter((name) => !FILE_SUFFIXES.has(name.slice(name.lastIndexOf('.') + 1)))
   return { out, leftovers }
 }
 

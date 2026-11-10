@@ -17,7 +17,11 @@ allowed-tools:
 - Do not call internal MCP/CLI adapters directly. They are hidden behind
   `unica` and synchronized by the orchestrator.
 - Интерфейс называет адрес: `args.at` вида
-  `<набор>:Subsystem.<Имя>.Interface`. Пути к `CommandInterface.xml` наружу
+  `<набор>:Subsystem.<Имя>.Interface`, а порядок команд — адрес группы
+  `…Interface.Group.<Группа>`. Имя группы с точкой (`CommandGroup.Цены`)
+  пишется в адресе с `\.`: `…Group.CommandGroup\.Цены` (в JSON —
+  `CommandGroup\\.Цены`); `mcp__unica__unica_view_6f3a42290cc8` ветви `Group` отдаёт готовые адреса.
+  Пути к `CommandInterface.xml` наружу
   нет; путь из диффа или лога переводит в адрес аварийный `mcp__unica__unica_resolve_55e2d51be222`.
 - Сначала вызови `mcp__unica__unica_apply_8ba7af26408e` с `at` и `ops`: это план без записи.
   Когда пользователь поручил внести эту правку, вызови `mcp__unica__unica_apply_8ba7af26408e` только
@@ -34,7 +38,7 @@ allowed-tools:
 |---|---|---|---|
 | `commandVisibility.set` | `…Subsystem.<Имя>.Interface` | `items: [{command, visible}]` | `CommandsVisibility` |
 | `commandPlacement.set` | `…Subsystem.<Имя>.Interface` | `items: [{command, group?, placement?}]` | `CommandsPlacement` |
-| `commandOrder.set` | `…Subsystem.<Имя>.Interface` | `values: {group, commands: […]}` | `CommandsOrder` |
+| `commandOrder.set` | `…Subsystem.<Имя>.Interface.Group.<Группа>` | `values: {commands: […]}` | `CommandsOrder` |
 | `groupOrder.set` | `…Subsystem.<Имя>.Interface` | `values: {groups: […]}` | `GroupsOrder` |
 | `subsystemOrder.set` | `<набор>:Configuration` | `values: {subsystems: […]}` | `SubsystemsOrder` |
 
@@ -48,12 +52,13 @@ allowed-tools:
 
 **Порядок — перестановка сохранённого состава.** Три операции порядка
 принимают полную последовательность тех же элементов, что уже сохранены:
-у `commandOrder.set` — команд названной группы, у `groupOrder.set` — групп,
+у `commandOrder.set` — команд группы адреса, у `groupOrder.set` — групп,
 у `subsystemOrder.set` — подсистем. Пропуск, повтор или лишний элемент
 отклоняются без записи: пропуск не удаляет настройку. Прочитай текущий
 порядок в `mcp__unica__unica_view_6f3a42290cc8` и переставь его. Если порядка ещё нет, список
 задаёт его впервые. Порядок других групп и остальные секции файла
-не меняются.
+не меняются. Прежний `values.group` отклоняется с `bad_value`, `next` ведёт
+к адресу группы.
 
 **Каждая операция правит свою секцию и ничью больше.** В частности, правка
 видимости касается только общего значения: переопределения по ролям в том же
@@ -130,9 +135,8 @@ allowed-tools:
         {
           "op": "commandOrder.set",
           "args": {
-            "at": "main:Subsystem.Продажи.Interface",
+            "at": "main:Subsystem.Продажи.Interface.Group.NavigationPanelImportant",
             "values": {
-              "group": "NavigationPanelImportant",
               "commands": [
                 "Report.Продажи.Command.Отчёт",
                 "Catalog.Товары.StandardCommand.OpenList"

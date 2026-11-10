@@ -30,7 +30,7 @@ allowed-tools:
 {
   "jsonrpc": "2.0",
   "method": "tools/call",
-  "params": { "name": "mcp__unica__unica_view_6f3a42290cc8", "arguments": { "cwd": "<workspace>" } }
+  "params": { "name": "mcp__unica__unica_view_6f3a42290cc8", "arguments": {} }
 }
 ```
 
@@ -44,7 +44,7 @@ allowed-tools:
   "method": "tools/call",
   "params": {
     "name": "mcp__unica__unica_view_6f3a42290cc8",
-    "arguments": { "cwd": "<workspace>", "at": "ext:Configuration" }
+    "arguments": { "at": "ext:Configuration" }
   }
 }
 ```
@@ -56,7 +56,7 @@ allowed-tools:
 | Префикс имён | `props.properties.namePrefix` |
 | Режим совместимости расширения | `props.properties.extensionCompatibilityMode` |
 | Сколько объектов в расширении | `props.totalObjects` |
-| Состав по видам | `branches` — по ветви на вид с числом объектов |
+| Состав по видам | `branches` — по ветви на каждый вид, в том числе пустой (`count: 0`) |
 
 `props.support.state` у расширения — `extension`: это его собственный статус
 поддержки, а не поддержка объекта конфигурации.
@@ -75,7 +75,7 @@ allowed-tools:
   "method": "tools/call",
   "params": {
     "name": "mcp__unica__unica_check_6db7d2a7495f",
-    "arguments": { "cwd": "<workspace>", "at": "ext:Configuration" }
+    "arguments": { "at": "ext:Configuration" }
   }
 }
 ```
@@ -96,7 +96,6 @@ allowed-tools:
   "params": {
     "name": "mcp__unica__unica_diff_14922c75f4c4",
     "arguments": {
-      "cwd": "<workspace>",
       "left": "main:Catalog.Валюты",
       "right": "ext:Catalog.Валюты"
     }
@@ -126,7 +125,7 @@ allowed-tools:
   "method": "tools/call",
   "params": {
     "name": "mcp__unica__unica_search_a8644a757dff",
-    "arguments": { "cwd": "<workspace>", "query": "&ИзменениеИКонтроль", "scope": "ext:Configuration" }
+    "arguments": { "query": "&ИзменениеИКонтроль", "scope": "ext:Configuration" }
   }
 }
 ```
@@ -137,7 +136,7 @@ allowed-tools:
   "method": "tools/call",
   "params": {
     "name": "mcp__unica__unica_search_a8644a757dff",
-    "arguments": { "cwd": "<workspace>", "query": "&Вместо", "scope": "ext:Configuration" }
+    "arguments": { "query": "&Вместо", "scope": "ext:Configuration" }
   }
 }
 ```

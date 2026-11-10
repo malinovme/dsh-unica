@@ -11,12 +11,11 @@ description: "Моделирование метаданных 1С. Исполь�
 - Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
 контракт каждой — `argsSchema`, `execution`, `previewRequired`,
 `dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
-при `implemented: true` используй опубликованную `argsSchema`; при
-`support.state: limited` разрешено только подмножество `support.supportedArgs`.
-При `support.state: unavailable` остановись; не выдумывай аргументов при
-`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
-затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
-вызовами. Не обходи контракт прямым runner-ом.
+используй опубликованную `argsSchema`; при `support.state: limited`
+разрешено только подмножество `support.supportedArgs`. Недоступной операции
+в словаре нет. Для плановой операции сначала проверь результат
+`dryRun: true`, затем исполняй запрос с `dryRun: false`. Preview
+не фиксирует входы между вызовами. Не обходи контракт прямым runner-ом.
 - Use `mcp__unica__unica_docs_fd15d9ecf894` with `source: "development-standard"` for the standards about modelling: 432, 468, 474, 531, 587, 603, 649, 677, 697, 704, 728, and diagnostics АПК:93, АПК:304, АПК:305, АПК:1205, АПК:1207, АПК:1210-1217, АПК:1329, АПК:1330. These are standards, not evidence of runtime behavior; confirm the wording before citing one.
 - Use `mcp__unica__unica_view_6f3a42290cc8` on the role node when predefined items need their interactive-deletion rights checked.
 - Do not call internal analyzer, runtime, standards, or package adapters directly. They are hidden behind MCP `unica`.

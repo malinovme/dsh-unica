@@ -13,18 +13,21 @@ allowed-tools:
 ## MCP routing
 
 - Preferred path: use MCP `unica` tool `mcp__unica__unica_apply_8ba7af26408e`: форма заводится
-  операцией `form.create`, наполняется `element.add`, `formAttribute.add`,
-  `formCommand.add`, `event.bind`.
+  операцией `form.add` на объекте-владельце, наполняется `item.add`,
+  `attribute.add`, `command.add`, `event.bind`.
 - Не зови внутренние адаптеры напрямую: они спрятаны за MCP `unica`.
 - Сначала вызови `mcp__unica__unica_apply_8ba7af26408e` с `at` и `ops`: это план без записи.
   Когда пользователь поручил внести эту правку, вызови `mcp__unica__unica_apply_8ba7af26408e` только
   с `executionToken` из `data.executionToken` успешного плана.
-- Словарь операций узла даёт `mcp__unica__unica_view_6f3a42290cc8 {at}` в секции `can`.
+- Словарь операций узла даёт `mcp__unica__unica_view_6f3a42290cc8 {at}` в словаре `can`.
 
 ## Шаг 1 — завести форму
 
-Адрес называет будущую форму: `<набор>:<Вид>.<Имя>.Form.<Форма>`; `values.type`
-задаёт назначение, `values.name` обязано совпасть с именем в адресе.
+Форму создаёт операция владельца: адрес — объект `<набор>:<Вид>.<Имя>`,
+элемент `items` называет новую форму (`name`) и её назначение (`type`).
+Адреса формы, которой ещё нет, назвать нельзя. Снятая `form.create`
+получает отказ `bad_value`, а `next` ведёт к владельцу, где исполнима
+`form.add`.
 
 ```json
 {
@@ -33,9 +36,9 @@ allowed-tools:
   "params": {
     "name": "mcp__unica__unica_apply_8ba7af26408e",
     "arguments": {
-      "at": "main:Catalog.Валюты.Form.ФормаЭлемента",
+      "at": "main:Catalog.Валюты",
       "ops": [
-        {"op": "form.create", "args": {"values": {"name": "ФормаЭлемента", "type": "ObjectForm"}}}
+        {"op": "form.add", "args": {"items": [{"name": "ФормаЭлемента", "type": "ObjectForm"}]}}
       ]
     }
   }
@@ -57,13 +60,25 @@ allowed-tools:
     "arguments": {
       "at": "main:Catalog.Валюты.Form.ФормаЭлемента",
       "ops": [
-        {"op": "formAttribute.add", "args": {"items": [{"name": "Объект", "type": "CatalogObject.Валюты", "main": true}]}},
-        {"op": "element.add", "args": {"items": [{"name": "Наименование", "type": "InputField", "path": "Объект.Наименование"}]}}
+        {"op": "props.set", "args": {"values": {"Title": "Валюта", "AutoTitle": false, "Width": 60}}},
+        {"op": "attribute.add", "args": {"items": [{"name": "Объект", "type": "CatalogObject.Валюты", "main": true}]}},
+        {"op": "item.add", "args": {"items": [{"name": "Наименование", "type": "InputField", "path": "Объект.Наименование"}]}}
       ]
     }
   }
 }
 ```
+
+Заголовок, размеры и поведение самой формы пишет `props.set` на адресе
+формы. Ключи — имена, которые `mcp__unica__unica_view_6f3a42290cc8` формы показывает в
+`props.properties`: `Title`, `AutoTitle`, `Width`, `Height`, `Scale`,
+`WindowOpeningMode` и другие из `….Form.<Форма>.Can.props.set`. Заголовок
+без `AutoTitle: false` платформа показывает вместе с представлением объекта.
+
+Элементы внутрь группы добавляет `item.add` на адресе группы
+(`….Form.ФормаЭлемента.Item.<Группа>`), обработчик события — `event.bind`
+на адресе события (`….Item.<Поле>.Event.OnChange`). Группа, созданная
+в том же вызове, принимает элементы следующей операции с этим `args.at`.
 
 Точечные правки готовой формы держит `form-edit`; DSL ниже описывает, как
 выражать внутреннее описание элементов. На публичной поверхности `items[]`
@@ -94,8 +109,8 @@ allowed-tools:
 }
 ```
 
-- `title` — заголовок формы (multilingual). Можно указать и в `properties`, но лучше на верхнем уровне
-- `properties` — свойства формы: `autoTitle`, `windowOpeningMode`, `commandBarLocation`, `saveDataInSettings`, `width`, `height` и др.
+- `title` — заголовок формы (multilingual). На поверхности его пишет `props.set` формы ключом `Title`
+- `properties` — свойства формы: `autoTitle`, `windowOpeningMode`, `commandBarLocation`, `saveDataInSettings`, `width`, `height` и др. На поверхности их пишет `props.set` формы именами XML: `AutoTitle`, `WindowOpeningMode`, `Width`
 - `events` — обработчики событий формы (ключ: имя события 1С, значение: непустое строковое имя процедуры). Этот формат не поддерживает `callType`.
 - `excludedCommands` — исключённые стандартные команды
 
@@ -486,8 +501,8 @@ allowed-tools:
 
 ## Workflow
 
-1. **Сборка**: `mcp__unica__unica_apply_8ba7af26408e` (`form.create`, затем наполнение) генерирует `Form.xml` и регистрирует `<Form>` в составе объекта-владельца, названного адресом.
-2. **Метаданные формы** (`ФормаСписка.xml`) и `Module.bsl` создаёт та же `form.create`; `form.add` регистрирует форму в составе объекта, когда она заводится списком. Существующий `Form.xml` ни одна из них не перезаписывает.
+1. **Сборка**: `mcp__unica__unica_apply_8ba7af26408e` (`form.add` на владельце, затем наполнение) генерирует `Form.xml` и регистрирует `<Form>` в составе объекта-владельца, названного адресом.
+2. **Метаданные формы** (`ФормаСписка.xml`) и `Module.bsl` создаёт та же `form.add`. Существующий `Form.xml` она не перезаписывает.
 3. **Проверка**: `mcp__unica__unica_check_6db7d2a7495f` на узле формы, затем `mcp__unica__unica_view_6f3a42290cc8` on the form node.
 
 ## Верификация
@@ -516,7 +531,6 @@ allowed-tools:
   "params": {
     "name": "mcp__unica__unica_view_6f3a42290cc8",
     "arguments": {
-      "cwd": "<workspace>",
       "at": "main:Catalog.Валюты.Form.ФормаЭлемента"
     }
   }
@@ -528,13 +542,12 @@ allowed-tools:
 - Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
 контракт каждой — `argsSchema`, `execution`, `previewRequired`,
 `dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
-при `implemented: true` используй опубликованную `argsSchema`; при
-`support.state: limited` разрешено только подмножество `support.supportedArgs`.
-При `support.state: unavailable` остановись; не выдумывай аргументов при
-`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
-затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
-вызовами. Не обходи контракт прямым runner-ом.
+используй опубликованную `argsSchema`; при `support.state: limited`
+разрешено только подмножество `support.supportedArgs`. Недоступной операции
+в словаре нет. Для плановой операции сначала проверь результат
+`dryRun: true`, затем исполняй запрос с `dryRun: false`. Preview
+не фиксирует входы между вызовами. Не обходи контракт прямым runner-ом.
 
 - **Тип главного реквизита**: `ExternalDataProcessorObject.ИмяОбработки` (не `DataProcessorObject`)
 - **DataPath**: используйте реквизиты формы (`ИмяРеквизита`), а не `Объект.ИмяРеквизита` — у внешних обработок нет реквизитов объекта в метаданных
-- **Ссылочные типы**: `CatalogRef.XXX`, `DocumentRef.XXX` допустимы в XML, но для будущей публикации EPF потребуется база с целевой конфигурацией; runtime-публикацию сначала обнаруживать через `mcp__unica__unica_run_189d01f64719 {}` и использовать `make` только при `implemented: true`, не угадывая аргументы при `argsSchema: null`
+- **Ссылочные типы**: `CatalogRef.XXX`, `DocumentRef.XXX` допустимы в XML, но для будущей публикации EPF потребуется база с целевой конфигурацией; runtime-публикацию сначала обнаруживать через `mcp__unica__unica_run_189d01f64719 {}` и использовать `make` только когда он есть в словаре, с аргументами из его `argsSchema`

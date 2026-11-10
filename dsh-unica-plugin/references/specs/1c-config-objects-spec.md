@@ -422,6 +422,13 @@ Platform-generated CDFI sidecar `ConfigDumpInfo.xml` с корнем
 элемент как `incomplete` с предупреждением и не становится разрешённым входом
 мутации.
 
+Тип объекта основной конфигурации в выгрузке расширения записан
+`<v8:TypeId>UUID</v8:TypeId>` (см. [1c-extension-spec.md](1c-extension-spec.md)).
+`mcp__unica__unica_view_6f3a42290cc8` возвращает его вариантом `{"kind":"typeId","typeId":"<UUID>"}`,
+а весь тип — с `mutationCapability: readOnly`: имени у такого типа нет, во вход
+writer он не передаётся. Правка других свойств элемента его не меняет; явная
+замена `type` записывает новый тип целиком.
+
 **Составной тип (несколько типов):**
 ```xml
 <Type>
@@ -488,11 +495,11 @@ Platform-generated CDFI sidecar `ConfigDumpInfo.xml` с корнем
     <xr:Field>Catalog.Номенклатура.StandardAttribute.Description</xr:Field>
     <xr:Field>Catalog.Номенклатура.StandardAttribute.Code</xr:Field>
 </InputByString>
-<SearchStringModeOnInputByString>Begin</SearchStringModeOnInputByString>  <!-- Begin | Anywhere -->
+<SearchStringModeOnInputByString>Begin</SearchStringModeOnInputByString>  <!-- Begin | AnyPart -->
 <FullTextSearchOnInputByString>Use</FullTextSearchOnInputByString>
-<ChoiceDataGetModeOnInputByString>Directly</ChoiceDataGetModeOnInputByString> <!-- Directly | SlowlyObtainedSet -->
-<CreateOnInput>DontUse</CreateOnInput>                  <!-- Use | DontUse -->
-<ChoiceHistoryOnInput>Auto</ChoiceHistoryOnInput>        <!-- Auto | Use | DontUse -->
+<ChoiceDataGetModeOnInputByString>Directly</ChoiceDataGetModeOnInputByString> <!-- Directly | Background -->
+<CreateOnInput>DontUse</CreateOnInput>                  <!-- Auto | Use | DontUse -->
+<ChoiceHistoryOnInput>Auto</ChoiceHistoryOnInput>        <!-- Auto | DontUse -->
 ```
 
 ### 4.8. Свойства блокировки данных
@@ -892,7 +899,7 @@ XML-элемент: `<Catalog>`. Категория InternalInfo: CatalogObject,
 <CodeLength>11</CodeLength>
 <CodeType>String</CodeType>                          <!-- String | Number -->
 <CodeAllowedLength>Variable</CodeAllowedLength>      <!-- Variable | Fixed -->
-<CodeSeries>WholeCatalog</CodeSeries>                <!-- WholeCatalog | WithinOwnerSubordination | WithinParent -->
+<CodeSeries>WholeCatalog</CodeSeries>                <!-- WholeCatalog | WithinOwnerSubordination | WithinSubordination -->
 <DescriptionLength>150</DescriptionLength>
 <CheckUnique>true</CheckUnique>
 <Autonumbering>true</Autonumbering>
@@ -911,10 +918,10 @@ XML-элемент: `<Catalog>`. Категория InternalInfo: CatalogObject,
 **Прочее:**
 
 ```xml
-<EditType>InDialog</EditType>               <!-- InDialog | InList | Both -->
+<EditType>InDialog</EditType>               <!-- InDialog | InList | BothWays -->
 <QuickChoice>true</QuickChoice>
 <ChoiceMode>BothWays</ChoiceMode>            <!-- BothWays -->
-<PredefinedDataUpdate>Auto</PredefinedDataUpdate>  <!-- Auto | DontAutoUpdate -->
+<PredefinedDataUpdate>Auto</PredefinedDataUpdate>  <!-- Auto | AutoUpdate | DontAutoUpdate -->
 ```
 
 ### 7.2. Предопределённые элементы (Predefined.xml)
@@ -1097,12 +1104,13 @@ XML-элемент: `<AccumulationRegister>`.
 **Специфичные свойства:**
 
 ```xml
-<RegisterType>Balances</RegisterType>       <!-- Balances (остатки) | Turnovers (обороты) -->
+<RegisterType>Balance</RegisterType>        <!-- Balance (остатки) | Turnovers (обороты) -->
 <EnableTotalsSplitting>true</EnableTotalsSplitting>
 ```
 
-- `Balances` — хранит остатки (приход/расход → итоговое сальдо)
+- `Balance` — хранит остатки (приход/расход → итоговое сальдо)
 - `Turnovers` — хранит только обороты (без остатков)
+- Вид регистра задаёт поля движения: у `Balance` есть стандартный реквизит `ВидДвижения` (`RecordType`: `Receipt`/`Expense`, в коде `ВидДвиженияНакопления.Приход`/`Расход`), у `Turnovers` его нет — движение оборотного регистра не указывает вид, а обращение к `ВидДвижения` падает при проведении.
 
 **Дочерние объекты:** `<Dimension>`, `<Resource>`, `<Attribute>`.
 
@@ -1704,11 +1712,22 @@ XML-элемент: `<EventSubscription>`.
 и `cfg:CalculationRegisterRecordSet.Xxx`.
 
 Публичный типизированный маршрут создания и редактирования подписки проверяет
-одну итоговую связку `Source` → `Event` → `Handler`. `Source` меняется операцией
-`editRelations` с `relation: "source"`, `mode: "replace"`; `Event` и `Handler` —
-операцией `setProperties` в том же атомарном вызове. Это два из пяти существующих
-тегов `op`, а не отдельная операция подписки. Частичные режимы и пустой итоговый
-`Source` не поддерживаются. Порядок целей не участвует в семантическом сравнении.
+одну итоговую связку `Source` → `Event` → `Handler`. `Source` меняется операциями
+со связью `source`: `relation.replace` задаёт полный логический состав,
+`relation.add` добавляет перечисленные цели, а `relation.remove` удаляет их.
+`Event` и `Handler` меняются через `setProperties` в том же атомарном вызове.
+
+При `relation.add` и `relation.remove` байты и относительный порядок прежних
+узлов сохраняются, кроме удаляемых; новые цели сортируются только между собой
+и дополняют свою группу XML (`Type` перед `TypeSet`/`TypeId`). Добавление уже
+имеющейся или удаление отсутствующей цели не меняет файл. Изменяющий состав
+`relation.replace` выпускает логические цели в детерминированном порядке.
+Порядок целей не участвует в семантическом сравнении.
+
+После всех операций одного вызова в `Source` должен остаться хотя бы один
+логический источник. Поэтому промежуточный пустой состав допустим, если другая
+операция того же вызова добавляет источник; пустой итог отклоняется без записи.
+Сохранённые `v8:TypeId` не считаются логическими источниками.
 
 Каждый элемент `targets` принадлежит закрытому размеченному объединению:
 
@@ -1910,6 +1929,7 @@ XML-элемент: `<WebService>`. Трёхуровневая вложенно�
 | Posting | - | + | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
 | RegisterRecords | - | + | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
 | RegisterType | - | - | - | - | - | + | - | - | - | - | - | - | - | - | - | - | - |
+| IncludeHelpInContents | + | + | - | - | + | + | + | + | + | + | + | + | + | + | + | + | + |
 | Periodicity | - | - | - | - | + | - | - | + | - | - | - | - | - | - | - | - | - |
 | WriteMode | - | - | - | - | + | - | - | - | - | - | - | - | - | - | - | - | - |
 | ChartOfAccounts | - | - | - | - | - | - | + | - | - | - | - | - | - | - | - | - | - |

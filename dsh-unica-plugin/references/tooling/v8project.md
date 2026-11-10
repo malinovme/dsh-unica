@@ -7,12 +7,11 @@ there is no argument that points a call at another file.
 Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
 контракт каждой — `argsSchema`, `execution`, `previewRequired`,
 `dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
-при `implemented: true` используй опубликованную `argsSchema`; при
-`support.state: limited` разрешено только подмножество `support.supportedArgs`.
-При `support.state: unavailable` остановись; не выдумывай аргументов при
-`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
-затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
-вызовами. Не обходи контракт прямым runner-ом.
+используй опубликованную `argsSchema`; при `support.state: limited`
+разрешено только подмножество `support.supportedArgs`. Недоступной операции
+в словаре нет. Для плановой операции сначала проверь результат
+`dryRun: true`, затем исполняй запрос с `dryRun: false`. Preview
+не фиксирует входы между вызовами. Не обходи контракт прямым runner-ом.
 
 For a new repository with no workspace, call `mcp__unica__unica_view_6f3a42290cc8 {}` first. Оно
 работает и без проектного файла: отвечает `config.state: "autodetected"`,
@@ -49,7 +48,7 @@ infobases:
 ```
 
 The infobase belongs in `v8project.local.yaml`: which infobase a checkout is
-attached to is known to the machine, not to the project. v8-runner 0.14 reads
+attached to is known to the machine, not to the project. v8-runner 0.15 reads
 the infobase map only from the local layer. An `infobases` section (or the
 legacy `infobase` key) in `v8project.yaml` is still accepted: the adapter
 moves it into a private copy of the local layer, where fields of the local
@@ -65,16 +64,10 @@ refuses a config that sets it. Relative `workPath`, infobase file paths, and
 source-set paths are resolved from the directory containing the primary config.
 
 `push.partialLoadThreshold` (and `build.partialLoadThreshold`) is not supported:
-v8-runner 0.14 has no partial-load threshold and chooses the mode itself; request
+v8-runner 0.15 has no partial-load threshold and chooses the mode itself; request
 a full load with `push` `full:true`. Unica refuses a config with this key; remove it.
 
-A file infobase is held by one working copy. The runner records the holder next
-to the infobase directory. A write from another working copy is not refused: it
-changes that copy's infobase, and the answer warns
-`infobase_of_another_copy`. Give each working copy its own infobase
-(`infobase.create`).
-
-`execution_timeout` is not supported. v8-runner 0.14 has no overall command
+`execution_timeout` is not supported. v8-runner 0.15 has no overall command
 deadline: a command runs to its terminal outcome, and limits belong to the
 steps that need them (`tools.edt_cli.command_timeout_ms`,
 `tests.execution_timeout_seconds`, `tools.client_mcp.wait_ready_timeout_ms`).
@@ -90,6 +83,28 @@ may override local-only `workPath`, `infobases` (or legacy `infobase`), `provide
 settings. It is not selectable by a call and must not redefine shared
 `source-set` or `format`.
 
+## File infobase holder
+
+A file infobase is held by one working copy. The runner records the holder next
+to the infobase directory. A write from another working copy is not refused: it
+changes that copy's infobase, and the answer warns
+`infobase_of_another_copy`. Give each working copy its own infobase
+(`infobase.create`).
+
+When Unica projects the config, its stable private directory becomes the holder:
+`.build/unica/runner-project/`, or `runner-project/<working-copy-root-key>/`
+under `UNICA_CACHE_DIR`. Removing this directory makes the holder appear gone;
+another working copy can then take the infobase without a warning. A command
+that needs no projection removes the old projection directory and uses the
+working-copy root as its holder.
+
+The reverse transition has a limitation: if the holder is already the
+working-copy root and a later config needs projection, the runner treats the
+projection as another live copy, warns and keeps the old holder. To transfer
+ownership to the projection, confirm that the recorded root is this working
+copy and manually remove that root's entry from the holder marker beside the
+infobase. The adapter does not perform this recovery itself.
+
 ## Runner migration
 
 The top-level `builder` key is rejected. Remove it to use the runner's per-operation
@@ -99,6 +114,27 @@ Names are lowercase (`designer`, `agent`, `ibcmd`); the runner validates each
 operation/provider pair. Do not mechanically replace `builder` with one global
 provider: each operation has its own supported executors. Keep machine-specific
 overrides in `v8project.local.yaml`. Unica does not rewrite existing project files.
+
+## Headless source export
+
+For Designer XML, select `ibcmd` for `pull` in `v8project.local.yaml`:
+
+```yaml
+providers:
+  pull: ibcmd
+```
+
+This selects `ibcmd config export` for the main configuration and for an
+installed extension. It does not start the Designer agent, so no GTK/X display
+or wrapper forcing `GDK_BACKEND` is needed for that export. A local 1C 8.3.27
+installation with `ibcmd` must be available and verifiable; configure
+`tools.platform` as described below when discovery is ambiguous.
+
+Use `mcp__unica__unica_run_189d01f64719` to preview and execute `pull`; see
+[workspace runtime](../use-cases/workspace-runtime.md#headless-pull).
+The Unica adapter requires `force:true` and replaces the whole source set,
+including untracked files. It does not expose incremental `--sync` export.
+The `pull` provider does not choose the executor of `push`.
 
 ## Strict platform resolution
 
@@ -139,9 +175,9 @@ Within one source-set the format cannot be mixed: conflicting platform XML and
 EDT markers mean the source-set is invalid/ambiguous and must be fixed or
 converted before XML metadata tools are used.
 
-Format discovery remains per source-set, but `unica.epf.init` and
-`unica.erf.init` specifically require the global `format` value to be exact
-`DESIGNER` or omitted. v8-runner selects the external-project layout from that
+Format discovery remains per source-set, but external processor and report
+scaffolds written by the `epf-init` and `erf-init` skills specifically require
+the global `format` value to be exact `DESIGNER` or omitted. v8-runner selects the external-project layout from that
 global value; use a separate Designer workspace/config when the active config
 has global `format: EDT`.
 
@@ -184,11 +220,11 @@ directory named `main` keeps it.
 | Send sources / delete an extension | `push`, optional `sourceSet`, `full` and `force`; applies the database configuration after the generation check, `force:true` overwrites the infobase. Deletion uses only `delete: "InstalledName"` |
 | Replace one source set from the working configuration | `pull`, `force:true`, optional `sourceSet`, `extension`; no local-work protection |
 | Export the configuration or an extension as `.cf`/`.cfe` | `download`, `state=working` or `state=database`, `output`, optional `extension` |
-| Load a `.cf`/`.cfe` into the working configuration only | `upload` — unavailable: v8-runner 0.14 has no load without applying the database configuration ([#1246](https://github.com/IngvarConsulting/unica/issues/1246)) |
-| Build a `.cf`/`.cfe` from sources | `make`, `output`, optional `sourceSet`, `extension`; `.epf`/`.erf` are not published |
+| Load a `.cf`/`.cfe` into the working configuration only | `upload` — unavailable: the v8-runner 0.15 upload still applies the database configuration, and the adapter does not run `apply` or `reset` yet ([#1246](https://github.com/IngvarConsulting/unica/issues/1246)) |
+| Build a `.cf`/`.cfe`/`.epf`/`.erf` from sources | `make`, `output`; for CF/CFE optional `sourceSet` and `extension` (CFE); EPF/ERF require `sourceSet` naming a singleton matching Designer external source set and a declared main configuration |
 | Export the whole infobase as `.dt` | `infobase.dump`, `output` |
 | Load a `.dt` | `infobase.restore`, `input`, `mode=create` or `mode=replace` |
-| Launch a 1C client | `launch`, `clientMode`, optional `execute`; `waitForExit` with `waitTimeoutMs` supports `thin` + `.epf`; terminal, no preview required |
+| Launch a 1C client | `launch`, `clientMode`, optional `execute` and `applicationParameter`; `waitForExit` with `waitTimeoutMs` supports `thin` + `.epf` or an explicit application parameter; terminal, no preview required |
 | Inspect installed extensions | `extensions.list`, empty args; preview/apply opens a platform session |
 | Change installed extension activity | `extensions.set`, `name`, boolean `active`; other properties are unavailable |
 | Apply or discard pending configuration changes | `apply` and `reset` — unavailable until the runner supports them ([#1246](https://github.com/IngvarConsulting/unica/issues/1246)) |
@@ -216,7 +252,7 @@ the runner can load without applying and apply separately
   `mcp__unica__unica_view_6f3a42290cc8 {}` and write `v8project.yaml` yourself: no tool creates it.
 - Prefer `source-set` names over ad hoc source directories.
 - Treat a platform-generated CDFI sidecar `ConfigDumpInfo.xml` whose root is `ConfigDumpInfo` as local per-infobase runtime state: keep it out of Git and never use it as source-format evidence. A legitimate metadata descriptor (including an external EPF/ERF descriptor) for an object actually named `ConfigDumpInfo` remains source and belongs in Git.
-- Do not write `execution_timeout` or `push.partialLoadThreshold`: v8-runner 0.14 has neither an overall command
+- Do not write `execution_timeout` or `push.partialLoadThreshold`: v8-runner 0.15 has neither an overall command
   deadline nor a partial-load threshold, and Unica refuses a config with either key. Unica exposes no `timeoutMs` argument.
 - `upload`, `apply` and `reset` are unavailable: report loading a CF/CFE as a Unica MCP contract gap ([#1246](https://github.com/IngvarConsulting/unica/issues/1246)) and do not call the runner directly.
 - Designer/EDT conversion is not on the surface: Unica reads platform XML only.
@@ -224,5 +260,4 @@ the runner can load without applying and apply separately
 - When credentials are absent, do not initiate a runtime probe to discover them. Ask the user; classify only authentication evidence already supplied by a verified boundary.
 - If a command reports a 1C license problem, stop and ask the user to fix licensing. Do not edit license services, HASP settings, registry, or license files.
 - If a runtime flag or debug-server step is missing from the `mcp__unica__unica_run_189d01f64719`
-  dictionary, treat it as a Unica MCP contract gap. `.epf`/`.erf` publication
-  is one such gap: `make` builds `.cf` and `.cfe` only.
+  dictionary, treat it as a Unica MCP contract gap.

@@ -23,11 +23,11 @@
   },
   "unica": {
     "upstream": "https://github.com/IngvarConsulting/unica",
-    "upstreamVersion": "0.15.0-rc.1",
-    "portRevision": "2",
+    "upstreamVersion": "0.15.0-rc.5",
+    "portRevision": "3",
     "mcpServerName": "unica",
-    "skills": 55,
-    "referenceFiles": 48,
+    "skills": 50,
+    "referenceFiles": 46,
     "runtimeTargets": [
       "darwin-arm64",
       "linux-x64",

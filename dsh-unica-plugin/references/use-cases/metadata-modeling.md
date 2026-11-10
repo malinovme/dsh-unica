@@ -13,12 +13,11 @@ are `mcp__unica__unica_run_189d01f64719` operations: `push`, `pull`, `download`,
 Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
 контракт каждой — `argsSchema`, `execution`, `previewRequired`,
 `dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
-при `implemented: true` используй опубликованную `argsSchema`; при
-`support.state: limited` разрешено только подмножество `support.supportedArgs`.
-При `support.state: unavailable` остановись; не выдумывай аргументов при
-`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
-затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
-вызовами. Не обходи контракт прямым runner-ом.
+используй опубликованную `argsSchema`; при `support.state: limited`
+разрешено только подмножество `support.supportedArgs`. Недоступной операции
+в словаре нет. Для плановой операции сначала проверь результат
+`dryRun: true`, затем исполняй запрос с `dryRun: false`. Preview
+не фиксирует входы между вызовами. Не обходи контракт прямым runner-ом.
 
 ## Primary path
 
@@ -33,12 +32,20 @@ The workspace itself does not have a single source format. A project can contain
 an EDT configuration source-set and a platform XML external processor/report
 source-set. The format decision belongs to the selected source-set.
 
-Use native MCP tools exposed by the public `unica` server:
+Use the public `unica` server: read a node with `mcp__unica__unica_view_6f3a42290cc8`, change it with
+`mcp__unica__unica_apply_8ba7af26408e`, and validate it with `mcp__unica__unica_check_6db7d2a7495f`. Every node answer lists its
+operations in `can`; take the argument contract from there.
 
-- `unica.cf.*` for `Configuration.xml`, languages, roles, and child-object registration.
-- `unica.meta.*` for typed metadata object info/add/edit/remove operations.
-- `unica.subsystem.*` and `unica.interface.*` for sections and command interface.
-- `unica.template.*` for adding or removing metadata templates.
+- Configuration root properties and child objects: `props.set`,
+  `object.create` and `object.remove` (`cf-edit`, `meta-add` skills).
+- Object attributes, tabular sections, forms, commands and templates:
+  `attribute.*`, `tabularSection.*`, `form.*`, `command.*` and `template.*`
+  at the object's address (`meta-edit` skill).
+- Subsystems and the command interface: `subsystem.create`, `content.*`,
+  `childSubsystem.*` and the `command*.set` operations (`subsystem-edit`,
+  `interface-edit` skills).
+- A new configuration root has no canonical operation; the `cf-init` skill
+  gives the file format and names the contract gap.
 
 A platform-generated CDFI sidecar `ConfigDumpInfo.xml` whose root is
 `ConfigDumpInfo` is per-infobase runtime state, not metadata source. Do not edit

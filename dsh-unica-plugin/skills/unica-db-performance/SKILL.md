@@ -11,12 +11,11 @@ description: "Производительность БД и запросов 1С.
 - Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
 контракт каждой — `argsSchema`, `execution`, `previewRequired`,
 `dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
-при `implemented: true` используй опубликованную `argsSchema`; при
-`support.state: limited` разрешено только подмножество `support.supportedArgs`.
-При `support.state: unavailable` остановись; не выдумывай аргументов при
-`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
-затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
-вызовами. Не обходи контракт прямым runner-ом.
+используй опубликованную `argsSchema`; при `support.state: limited`
+разрешено только подмножество `support.supportedArgs`. Недоступной операции
+в словаре нет. Для плановой операции сначала проверь результат
+`dryRun: true`, затем исполняй запрос с `dryRun: false`. Preview
+не фиксирует входы между вызовами. Не обходи контракт прямым runner-ом.
 - Use `mcp__unica__unica_view_6f3a42290cc8` on the role node when performance behavior depends on rights filters, RLS, or tenant boundaries.
 - Do not call internal analyzer, runtime, standards, or package adapters directly. They are hidden behind MCP `unica`.
 
@@ -30,7 +29,7 @@ description: "Производительность БД и запросов 1С.
 
 1. Name the slow scenario first: user action, API call, report, background job, exchange step, or posting.
 2. Extract exact query/DCS text with `mcp__unica__unica_search_a8644a757dff` or `mcp__unica__unica_view_6f3a42290cc8` on the schema node; inspect large candidate modules with `mcp__unica__unica_view_6f3a42290cc8` on the module node (its `Method` branch lists the methods) before reading full bodies.
-3. Find callers with `mcp__unica__unica_search_a8644a757dff` by the method name when the performance issue depends on execution path, query-in-loop risk, or impact of moving logic; a call graph is not on the v0.13 surface.
+3. Find callers with `mcp__unica__unica_view_6f3a42290cc8` at `<method>.Caller` when the performance issue depends on execution path, query-in-loop risk, or impact of moving logic; `mcp__unica__unica_search_a8644a757dff` by the method name adds literal mentions.
 4. Inspect `mcp__unica__unica_view_6f3a42290cc8` on the object node for both the local object structure and related modules, roles, subscriptions, functional options, or predefined items that can change the performance path.
 5. Gather evidence: row counts, generated SQL, query plan, managed locks, lock order, lock/deadlock participants, long transaction boundaries, temp storage, TEMPDB or WAL pressure, and table/index names.
 6. Separate causes: inefficient platform query, missing or harmful index, broad virtual table read, query-in-loop, lock contention, DBMS maintenance, or data growth.

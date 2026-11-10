@@ -18,8 +18,8 @@ Fix: batch input data, use one server call, update client state once.
 
 Symptom: code starts touching new metadata objects but roles are not updated.
 
-Fix: inspect touched objects, update focused rights through role DSL, validate
-`Rights.xml`.
+Fix: inspect touched objects, add or update focused rights through `mcp__unica__unica_apply_8ba7af26408e`
+(`right.add`, `right.set`), then check the role with `mcp__unica__unica_check_6db7d2a7495f`.
 
 ## External Integration Timeouts
 

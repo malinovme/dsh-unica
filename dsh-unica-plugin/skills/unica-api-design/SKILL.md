@@ -13,12 +13,11 @@ description: "Проектирование и ревью API 1С: публичн
 - Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
 контракт каждой — `argsSchema`, `execution`, `previewRequired`,
 `dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
-при `implemented: true` используй опубликованную `argsSchema`; при
-`support.state: limited` разрешено только подмножество `support.supportedArgs`.
-При `support.state: unavailable` остановись; не выдумывай аргументов при
-`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
-затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
-вызовами. Не обходи контракт прямым runner-ом.
+используй опубликованную `argsSchema`; при `support.state: limited`
+разрешено только подмножество `support.supportedArgs`. Недоступной операции
+в словаре нет. Для плановой операции сначала проверь результат
+`dryRun: true`, затем исполняй запрос с `dryRun: false`. Preview
+не фиксирует входы между вызовами. Не обходи контракт прямым runner-ом.
 - Use v8std through `mcp__unica__unica_docs_fd15d9ecf894` with `source: "development-standard"` for standards 483, 543, 551, 553, and 644 before making compatibility claims.
 - Use `test-authoring` for unit tests that model API consumer scenarios; use `integration-implement` only when the task is about HTTP/REST/SOAP/gRPC transport implementation.
 - Do not call internal analyzer, standards, runtime, or package adapters directly. They are hidden behind MCP `unica`.
@@ -40,7 +39,7 @@ Classify every exported method before changing or calling it:
 1. Map source-sets with `mcp__unica__unica_view_6f3a42290cc8 {}` and inspect subsystem/object boundaries with `mcp__unica__unica_view_6f3a42290cc8` on the subsystem node or `mcp__unica__unica_view_6f3a42290cc8` on the object node.
 2. When the API belongs to a concrete metadata object, inspect `mcp__unica__unica_view_6f3a42290cc8` on the object node for related modules, roles, subscriptions, and functional options before classifying the boundary.
 3. Find the candidate API with `mcp__unica__unica_search_a8644a757dff`; inspect the module with `mcp__unica__unica_view_6f3a42290cc8` on the module node (its `Method` branch lists the methods) before reading broad code.
-4. Find callers and impact of exported methods with `mcp__unica__unica_search_a8644a757dff` by the method name (a call graph is not on the v0.13 surface); the same search covers export area comments, module suffixes, deprecated sections, and literal contract mentions.
+4. Find callers of exported methods with `mcp__unica__unica_view_6f3a42290cc8` at `<method>.Caller` (callees at `<method>.Callee`); `mcp__unica__unica_search_a8644a757dff` by the method name covers export area comments, module suffixes, deprecated sections, and literal contract mentions.
 5. Check standards through `mcp__unica__unica_docs_fd15d9ecf894` with `source: "development-standard"`: functional subsystems, libraries, overridable modules, version numbering, and backward compatibility.
 6. Classify the change: new method, optional parameter, mandatory parameter, removed/renamed method, changed parameter type, behavior change, deprecated method, or direct data access across a boundary.
 7. Decide the required version impact and migration path.

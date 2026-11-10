@@ -11,12 +11,11 @@ description: "Объектные блокировки 1С — пессимист
 - Runtime идёт через `mcp__unica__unica_run_189d01f64719`: вызов без `op` отдаёт словарь операций и
 контракт каждой — `argsSchema`, `execution`, `previewRequired`,
 `dryRunRequired`. Контракт вызова бери оттуда, а не из этого текста;
-при `implemented: true` используй опубликованную `argsSchema`; при
-`support.state: limited` разрешено только подмножество `support.supportedArgs`.
-При `support.state: unavailable` остановись; не выдумывай аргументов при
-`argsSchema: null`. Для плановой операции сначала проверь результат `dryRun: true`,
-затем исполняй запрос с `dryRun: false`. Preview не фиксирует входы между
-вызовами. Не обходи контракт прямым runner-ом.
+используй опубликованную `argsSchema`; при `support.state: limited`
+разрешено только подмножество `support.supportedArgs`. Недоступной операции
+в словаре нет. Для плановой операции сначала проверь результат
+`dryRun: true`, затем исполняй запрос с `dryRun: false`. Preview
+не фиксирует входы между вызовами. Не обходи контракт прямым runner-ом.
 - Use `mcp__unica__unica_docs_fd15d9ecf894` with `source: "development-standard"` for the one development-standard here, 490, and for related ones 648 and 783. These are standards, not evidence of runtime behavior; confirm the wording before citing one.
 - Reproducing a conflict requires separate runtime evidence; a `mcp__unica__unica_run_189d01f64719` preview or a `mcp__unica__unica_check_6db7d2a7495f` verdict does not infer it.
 - Do not call internal analyzer, runtime, standards, or package adapters directly. They are hidden behind MCP `unica`.
@@ -46,7 +45,7 @@ Two facts decide most reviews:
 ## Workflow
 
 1. Name the concurrency you are actually facing: two users on one object → this skill; two transactions on shared data → `transactions-locks`.
-2. Find every path that modifies the object with `mcp__unica__unica_search_a8644a757dff` by the method and object names; a call graph is not on the v0.13 surface. A cooperative lock is only as good as the path that skips it.
+2. Find every path that modifies the object: `mcp__unica__unica_view_6f3a42290cc8` at `<method>.Caller` lists the callers of a writing method, and `mcp__unica__unica_search_a8644a757dff` by the method and object names finds literal mentions. A cooperative lock is only as good as the path that skips it.
 3. Choose the shape before writing code: fail loudly so the user learns who holds the object, or skip and retry on the next run for background work (std490).
 4. Decide the form id question. With a form id the lock follows the form's lifetime; without one it follows the session, the server call, or the transaction. Do not mix both for the same object — that combination raises.
 5. Inspect a non-standard editing form with `mcp__unica__unica_view_6f3a42290cc8` on the form node and reproduce the standard behaviour with the form lock and unlock methods.

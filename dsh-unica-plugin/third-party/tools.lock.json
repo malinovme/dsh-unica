@@ -153,10 +153,10 @@
     },
     {
       "name": "unica",
-      "version": "0.15.0-rc.1",
+      "version": "0.15.0-rc.5",
       "repository": "https://github.com/IngvarConsulting/unica",
-      "sourceTag": "workspace",
-      "sourceCommit": "workspace",
+      "sourceTag": "v0.15.0-rc.5",
+      "sourceCommit": "537e4b513c80ce4ed0dfd690a73cfeded3751f1f",
       "license": "LGPL-3.0-or-later",
       "assetStrategy": "cargo-workspace",
       "binaryName": "unica",

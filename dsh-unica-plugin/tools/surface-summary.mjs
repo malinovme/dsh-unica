@@ -28,7 +28,7 @@ for (const e of await readdir(join(ROOT, 'skills'), { withFileTypes: true })) {
   if (e.isDirectory()) skills.push(e.name.replace(/^unica-/, ''))
 }
 const metadata = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8')).unica
-assert.equal(catalog.length, metadata.mcpTools, 'package.json mcpTools differs from the catalog')
+assert.equal(catalog.length, metadata.tools, 'package.json tools differs from the catalog')
 assert.equal(skills.length, metadata.skills, 'package.json skills differs from the catalog')
 skills.sort()
 console.log(`\nSKILLS: ${skills.length}`)
