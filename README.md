@@ -387,10 +387,11 @@ rm -rf $DSH_HOME/unica                    # кэш рантайма и сост�
 
 ## Лицензии
 
-Навыки и справочники — из Unica, под их лицензией (см.
-[`dsh-unica-plugin/ATTRIBUTIONS.md`](dsh-unica-plugin/ATTRIBUTIONS.md) и
-[`LICENSE`](dsh-unica-plugin/LICENSE)). Порт не распространяет сторонние
-бинарники: рантайм и движки скачиваются на машине пользователя.
+Код порта — **LGPL-3.0-or-later**, см. [`LICENSE`](LICENSE). Навыки и
+справочники — из Unica под той же лицензией; авторы и сторонние компоненты
+перечислены в [`dsh-unica-plugin/ATTRIBUTIONS.md`](dsh-unica-plugin/ATTRIBUTIONS.md)
+и [`dsh-unica-plugin/LICENSE`](dsh-unica-plugin/LICENSE). Порт не распространяет
+сторонние бинарники: рантайм и движки скачиваются на машине пользователя.
 
 ## Ссылки
 
