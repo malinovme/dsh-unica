@@ -67,5 +67,9 @@ try {
   if (tail.length > 0) console.error(tail)
   process.exitCode = 1
 } finally {
-  proc.close('selftest is done')
+  // The self-test is a one-shot probe: it must leave nothing running. With a
+  // plain close on Windows only the Node launcher dies, and the runtime's daemon
+  // survives, keeps the console it inherited and holds provider-state locks — the
+  // installer then looks hung after it has already finished.
+  proc.close('selftest is done', { tree: true })
 }

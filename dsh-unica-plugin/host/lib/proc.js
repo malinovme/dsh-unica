@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 
 const CLIENT_INFO = { name: 'dsh-unica-native', version: '0.1.0' }
@@ -117,13 +117,34 @@ export class UnicaProc {
     this.#child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`)
   }
 
-  /** Stop the process; pending calls fail with the reason. */
-  close(reason = 'unica process closed') {
+  /**
+   * Stop the process; pending calls fail with the reason.
+   *
+   * `tree` also takes down what the launcher started. On Windows no signal is
+   * delivered: `kill()` is TerminateProcess, so only `launch.mjs` dies, while the
+   * runtime child it started — and the daemon that runtime keeps — live on. They
+   * inherit the console, so a window whose PowerShell has already exited stays
+   * open until the daemon leaves, and they keep the provider-state files busy. A
+   * one-shot probe that must leave nothing behind (the installer self-test) asks
+   * for the whole tree; a pooled process does not, because the daemon is shared
+   * by every server of the same core identity and is meant to outlive one of them.
+   */
+  close(reason = 'unica process closed', { tree = false } = {}) {
     if (this.#closing) return
     this.#closing = true
     this.#failAll(new Error(reason))
     const child = this.#child
     if (child === undefined || child.exitCode !== null) return
+    if (tree && process.platform === 'win32') {
+      // /T walks the child list, so launcher, server and daemon go together.
+      // spawnSync because close() promises the processes are gone when it returns.
+      const killed = spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+        timeout: 10_000,
+      })
+      if (killed.status === 0) return
+    }
     child.kill('SIGTERM')
     const killTimer = setTimeout(() => {
       if (child.exitCode === null) child.kill('SIGKILL')

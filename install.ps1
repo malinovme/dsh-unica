@@ -16,7 +16,7 @@
 # 'CmdletBinding'" before a single line executes.
 #
 # Parameters:
-#   -Version v0.15.0.3   release tag to install (default: the latest)
+#   -Version v0.15.0.4   release tag to install (default: the latest)
 #   -Profile web         DSH profile to patch (default: desktop if the Desktop
 #                        app has one, otherwise web)
 #   -DshHome C:\...\.dsh DSH home; normally taken from the environment
@@ -26,6 +26,12 @@
 # No [CmdletBinding()] on purpose: it is a statement attribute, and the text
 # `irm ... | iex` evaluates is not a script file, so a host that accepts the
 # attribute only at the head of a file rejects it. Nothing below needs it.
+#
+# Nothing here calls `exit` under `irm ... | iex`: the text is evaluated inside the
+# interactive session, so `exit` ends that session instead of returning to a prompt
+# - and the console window then stays on screen, owned by whatever the self-test
+# left running. `Die` throws, which is fatal in both modes, and a `-File` run gets
+# its exit code from the single `exit` at the very end.
 param(
   [string]$Version,
   [string]$Profile,
@@ -41,7 +47,7 @@ $ErrorActionPreference = 'Stop'
 $Asset = 'dsh-plugin-unica.tar.gz'
 
 function Say([string]$Message) { Write-Host $Message }
-function Die([string]$Message) { Write-Error "unica installer: $Message"; exit 1 }
+function Die([string]$Message) { throw "unica installer: $Message" }
 
 # -- prerequisites ----------------------------------------------------------
 # Node is the one hard requirement, and DSH could not run without it either.
@@ -135,4 +141,12 @@ if (-not $NoVerify) { $arguments += '--verify' }
 & node (Join-Path $install 'install.mjs') @arguments
 $code = $LASTEXITCODE
 Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
-exit $code
+
+# No unconditional `exit` here. The documented entry point is `irm ... | iex`, and
+# there `exit` ends the whole PowerShell session instead of returning to a prompt:
+# the window then stays on screen, held by the unica daemon the self-test inherited
+# it to, and looks hung after the install has already finished. When this file is
+# run as a script (`powershell -File install.ps1 ...`) it is its own host, so the
+# exit code still has to travel - $PSCommandPath is set only in that case.
+$global:LASTEXITCODE = $code
+if ($PSCommandPath) { exit $code }
