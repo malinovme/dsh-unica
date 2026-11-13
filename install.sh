@@ -2,7 +2,7 @@
 # Installs the DSH port of unica on macOS and Linux.
 #
 #   curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | sh
-#   gh api -H "Accept: application/vnd.github.raw+json" repos/malinovme/dsh-unica/contents/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | UNICA_VERSION=v0.15.0.3 sh
 #
 # This is a downloader, not the installer: it fetches the release archive, checks
 # it against the published SHA-256, unpacks it and hands over to `install.mjs`,
@@ -10,7 +10,7 @@
 # implementation of the install logic, written once in Node.
 #
 # Environment overrides:
-#   UNICA_VERSION=v0.15.0.1    release tag to install (default: the latest)
+#   UNICA_VERSION=v0.15.0.3    release tag to install (default: the latest)
 #   UNICA_PROFILE=web           DSH profile to patch (default: desktop if the
 #                               Desktop app has one, otherwise web)
 #   UNICA_DSH_HOME=~/.dsh       DSH home; normally taken from the environment
@@ -67,7 +67,7 @@ fetch(url, { headers: { accept: "application/vnd.github+json" } })
   .catch(() => process.exit(1))
 ' "$REPO" 2>/dev/null || true)"
 fi
-[ -n "${VERSION:-}" ] || die "cannot determine the latest release of $REPO. Pass UNICA_VERSION=<tag> (the repository is private, so an unauthenticated lookup cannot see its releases)."
+[ -n "${VERSION:-}" ] || die "cannot determine the latest release of $REPO. Pass UNICA_VERSION=<tag> to pin a release."
 
 # ── which profile ───────────────────────────────────────────────────────────
 # DSH Desktop serves its sessions from a profile of its own, and patching `web`
@@ -104,7 +104,7 @@ trap cleanup EXIT INT TERM
 # release tag has no meaning there, so the base is used verbatim.
 BASE="${UNICA_BASE_URL:-https://github.com/$REPO/releases/download/$VERSION}"
 say "  archive : $BASE/$ASSET"
-fetch "$BASE/$ASSET" "$WORK/$ASSET" || die "cannot download $BASE/$ASSET — check the version and that you have access to the repository (it is private)."
+fetch "$BASE/$ASSET" "$WORK/$ASSET" || die "cannot download $BASE/$ASSET — check the version and that the release is published."
 fetch "$BASE/$ASSET.sha256.json" "$WORK/$ASSET.sha256.json" || die "cannot download the checksum manifest."
 
 # ── verify ──────────────────────────────────────────────────────────────────

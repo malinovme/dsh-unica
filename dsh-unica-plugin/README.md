@@ -21,25 +21,16 @@
 curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | sh
 ```
 
-Для приватного репозитория на macOS / Linux сначала авторизуйте GitHub CLI
-командой `gh auth login --hostname github.com` (аккаунт должен иметь доступ к
-репозиторию), затем выполните:
-
-```sh
-gh api -H "Accept: application/vnd.github.raw+json" repos/malinovme/dsh-unica/contents/install.sh | sh
-```
-
-Авторизованный `gh` скачивает архив и манифест SHA-256 выбранного релиза.
-Без авторизованного `gh` скрипт использует `curl` (или `wget`) для публичного
-репозитория. Чтобы закрепить версию, передайте её именно процессу `sh`:
-
-```sh
-gh api -H "Accept: application/vnd.github.raw+json" repos/malinovme/dsh-unica/contents/install.sh | UNICA_VERSION=v0.12.3.3 sh
-```
-
 ```powershell
 # Windows
 irm https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.ps1 | iex
+```
+
+Чтобы закрепить версию, передайте её именно процессу `sh` (на Windows — параметр
+`-Version` скрипту):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | UNICA_VERSION=v0.15.0.3 sh
 ```
 
 Скрипт сам выбирает профиль (`desktop`, если он есть, иначе `web`) и после
@@ -69,7 +60,7 @@ node install.mjs --dry-run            # показать план, ничего 
 native check  : ok      serverInfo unica 0.15.0-rc.5, 11 tools in 377 ms, workspace /…
 ```
 
-Первый запуск скачивает ядро (10.4 МБ) — на медленной сети это минуты, и
+Первый запуск скачивает ядро (~15 МБ) — на медленной сети это минуты, и
 `--verify` даёт на холодный кэш отдельный бюджет времени.
 
 Затем **перезапустите сервер DSH** и **начните новую сессию** с пресетом
@@ -197,7 +188,7 @@ unica.view  ->  mcp__unica__unica_view_6f3a42290cc8
 ## Проверки
 
 ```sh
-node tools/check-refs.mjs .                 # 61 ссылка навыков на справочники
+node tools/check-refs.mjs .                 # 75 ссылок навыков на справочники
 node tools/check-encoding.mjs skills references
 node tools/check-tool-names.mjs             # 679 имён инструментов резолвятся
 node tools/check-preset.mjs <patch>         # форма патча и правила сессии
@@ -211,11 +202,14 @@ node tools/ci-dryrun.mjs                    # оба CI-прогона
 | Проверка | Результат |
 |---|---|
 | Установка в Web GUI и Desktop (Windows) | живой прогон, 11 инструментов |
-| `--verify` с холодным и тёплым кэшем | 286–1118 мс |
+| Установка и `--verify` на macOS arm64 | живой прогон |
+| `--verify` с холодным и тёплым кэшем (Windows) | 286–1118 мс |
+| Платформа 1С на macOS (8.3.27.2342) | `make`, `push`, `download`, `infobase.create`, `extensions.list` |
+| Две сессии в DSH — разные кодовые базы | живой прогон, разные `workspaceRoot` |
 | Перенос кэша при отказе демона | автоматически, с пояснением |
 | Установка из собранного архива | 50 навыков, 11 инструментов |
 | `ci-dryrun` (win32 и linux) | проходит |
-| macOS | **натурно не проверялась** |
+| Linux | только CI, натурно не проверялась |
 
 ## Перенос на другую машину
 
@@ -232,7 +226,7 @@ curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh
 
 - **macOS arm64 only.** Бинарников под Intel-маки апстрим не поставляет.
 - **Нужен Node.js** — он и так требуется DSH; порт своих бинарников не возит.
-- **Сеть при первом запуске** — ядро (10.4 МБ) и движки по требованию.
+- **Сеть при первом запуске** — ядро (~15 МБ) и движки по требованию.
 - **Права шире песочницы** для реальной работы: правка исходников 1С вне рабочего
   каталога требует `danger-full-access`.
 - **Справочники апстрима** всё ещё упоминают десять имён инструментов 0.12 в

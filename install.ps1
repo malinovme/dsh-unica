@@ -12,7 +12,7 @@
 # machines this script is for.
 #
 # Parameters:
-#   -Version v0.12.3.3   release tag to install (default: the latest)
+#   -Version v0.15.0.3   release tag to install (default: the latest)
 #   -Profile web         DSH profile to patch (default: desktop if the Desktop
 #                        app has one, otherwise web)
 #   -DshHome C:\...\.dsh DSH home; normally taken from the environment
@@ -61,7 +61,7 @@ if (-not $Version) {
       $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ accept = 'application/vnd.github+json' } -UseBasicParsing
       $Version = $release.tag_name
     } catch {
-      Die "cannot determine the latest release of $Repo. Pass -Version <tag> (the repository is private, so an unauthenticated lookup cannot see its releases)."
+      Die "cannot determine the latest release of $Repo. Pass -Version <tag> to pin a release."
     }
   }
 }
@@ -93,7 +93,7 @@ try {
   Invoke-WebRequest -Uri "$base/$Asset.sha256.json" -OutFile (Join-Path $work "$Asset.sha256.json") -UseBasicParsing
 } catch {
   Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
-  Die "cannot download from $base - check the version and that you have access to the repository (it is private). $($_.Exception.Message)"
+  Die "cannot download from $base - check the version and that the release is published. $($_.Exception.Message)"
 }
 
 # -- verify -----------------------------------------------------------------
