@@ -128,9 +128,11 @@ node install.mjs --target preset --profile desktop --cache-dir D:\unica-cache
 
 ### Как проверить, что режим работает
 
-Коротко — `node install.mjs --verify` (поднимает unica и читает `unica.view {}`).
-Полная процедура, включая живую проверку на двух проектах в DSH, диагностику и
-откат — в [docs/native-verification.md](../docs/native-verification.md).
+Коротко — `node host/selftest.js --cwd <проект>` (поднимает unica и читает
+`unica.view {}`), подробнее — [docs/native-verification.md](../docs/native-verification.md):
+только то, что обязано пройти при правильной установке. Платформенные операции,
+формы, СКД и расширения — в
+[docs/platform-verification.md](../docs/platform-verification.md).
 
 ### Пространство имён инструментов
 
