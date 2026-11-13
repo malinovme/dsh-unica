@@ -90,6 +90,24 @@ jobs:
         working-directory: dsh-unica-plugin
         run: node tools/build-runtime-manifest.mjs --check
 
+      # The release archive is built by `node package.mjs`, which walks the tree and
+      # hands `tar` a file list. On macOS that is not the whole story: bsdtar adds
+      # AppleDouble members of its own, which is how the 0.15.0.3 archive shipped a
+      # dozen entries its manifest never listed. package.mjs sets COPYFILE_DISABLE
+      # and reads the archive back; this step repeats the comparison on a fresh
+      # checkout so the artifact cannot drift from its manifest unnoticed.
+      - name: The release archive matches its own manifest
+        run: |
+          node dsh-unica-plugin/package.mjs --out /tmp/unica-check.tar.gz
+          members=$(tar -tzf /tmp/unica-check.tar.gz | wc -l | tr -d ' ')
+          declared=$(node -p "require('/tmp/unica-check.tar.gz.sha256.json').fileCount")
+          echo "archive members: $members, manifest fileCount: $declared"
+          if [ "$members" != "$declared" ]; then
+            echo "::error::the archive has $members members but its manifest declares $declared" >&2
+            tar -tzf /tmp/unica-check.tar.gz | grep -E '(^|/)\._|(^|/)\.DS_Store|__MACOSX' >&2 || true
+            exit 1
+          fi
+
       # The validator imports DSH's own `@deepseek-ai/dsh-agent-preset` and checks
       # the declaration against its shipped schema, so it needs a harness. It is
       # installed into an isolated prefix, never into the repository, and its

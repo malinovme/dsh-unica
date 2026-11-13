@@ -9,6 +9,13 @@ dsh-plugin-unica.tar.gz.sha256.json
 # Dependencies, if anyone ever runs pnpm/npm here
 node_modules/
 
+# macOS metadata. A Mac writes an AppleDouble sidecar (`._name`) next to every
+# file it copies onto a foreign filesystem and Finder drops `.DS_Store` into any
+# folder it opened. `package.mjs` skips both, so neither can reach a release
+# archive; this keeps them out of commits and out of `git status` as well.
+.DS_Store
+._*
+
 # Written by `node tools/build-skills.mjs`; contains absolute paths of the
 # build machine, so it is machine-specific rather than source.
 # A bare name matches at any depth — `tools/build-report.json` would be
