@@ -230,7 +230,7 @@ function nativeSelftest() {
       stderr += chunk
     })
     child.on('close', (code) => {
-      if (code !== 0) return finish({ ok: false })
+      if (code !== 0) return finish({ ok: false, code })
       const at = stdout.indexOf('{')
       if (at === -1) return finish({ ok: false, stderr: 'self-test produced no report' })
       let report
@@ -239,7 +239,7 @@ function nativeSelftest() {
       } catch (error) {
         return finish({ ok: false, stderr: `unreadable self-test report: ${error.message}` })
       }
-      finish({ ok: report.ok === true, tools: report.tools, server: report.server, root: report.root })
+      finish({ ok: report.ok === true, tools: report.tools, server: report.server, root: report.root, workspace: report.workspace })
     })
   })
 }
@@ -263,7 +263,19 @@ function isAccessRefusal(result) {
   if (result.ok) return false
   const message = result.stderr ?? ''
   if (/Access is denied|Отказано в доступе|os error 5/i.test(message)) return true
-  return result.ms !== undefined && result.ms < 2_000 && result.code !== 0
+  // A refusal is over before the server can print a catalog: a fast exit, a
+  // non-zero status, and no tools reported at all. This used to compare
+  // `result.code` with 0 without anything ever setting it, so `undefined !== 0`
+  // held and *every* failure under two seconds read as a refused cache — which is
+  // how a selftest that failed for an unrelated reason moved a working 676 MB
+  // cache aside and sent the install back to a cold download.
+  return (
+    result.code !== undefined &&
+    result.code !== 0 &&
+    result.ms !== undefined &&
+    result.ms < 2_000 &&
+    result.tools === undefined
+  )
 }
 
 /**
@@ -861,7 +873,7 @@ async function main() {
   console.log('  profile patch:')
   for (const line of summary) console.log(line)
   console.log('  files:')
-  for (const p of planned) console.log(`    ${p}`)
+  for (const p of new Set(planned)) console.log(`    ${p}`)
 
   if (!VERIFY) {
     console.log(
@@ -883,6 +895,12 @@ async function main() {
       `    ok      serverInfo ${verified.server?.name ?? '?'} ${verified.server?.version ?? '?'}, ${verified.tools} tools in ${verified.ms} ms` +
         `${verified.root === undefined ? '' : `, workspace ${verified.root}`}`,
     )
+    if (verified.workspace === 'not reported') {
+      console.log(
+        `    note    unica did not adopt ${VERIFY_CWD} as a workspace, so it reported no root.\n` +
+          `            The tool catalog is what this check asks for, and all ${verified.tools} tools answered.`,
+      )
+    }
     if (relocated) {
       console.log(
         `    note    the default cache location refused the bootstrap, so this install uses ${dirname(RUNTIMES)}.\n` +
@@ -896,8 +914,10 @@ async function main() {
     return
   }
 
-  console.log(`    FAIL    unica did not answer within ${SMOKE_TIMEOUT_MS / 1000} s`)
-  if (verified.stderr.trim() !== '') console.log(`            bridge said: ${verified.stderr.trim().split('\n').at(-1)}`)
+  const reason = verified.stderr.trim().split('\n').at(-1) ?? ''
+  console.log(
+    `    FAIL    ${reason !== '' ? reason : `unica did not answer within ${SMOKE_TIMEOUT_MS / 1000} s`}`,
+  )
   console.log(
     `\nThe profile was still patched, and DSH will report the preset as failed to load until this is\n` +
       `fixed — the picker hides such presets, so it would look like the install did nothing.\n` +

@@ -37,17 +37,28 @@ try {
     root = undefined
   }
 
+  // `ok` answers the installer's question — will the tools work here? — and the
+  // tool catalog answers it. The catalog arrives even in a directory unica will
+  // not adopt as a workspace: a protected one such as C:\Windows\System32 reports
+  // no workspaceRoot at all, yet lists all eleven tools. Workspace matching is a
+  // separate fact in `workspace`, and only a *mismatch* is a bridge defect.
+  const workspace = root === undefined ? 'not reported' : root === cwd ? 'matched' : 'mismatched'
   const report = {
-    ok: root === cwd,
+    ok: tools.length > 0 && workspace !== 'mismatched',
     cwd,
     root,
+    workspace,
     tools: tools.length,
     ms: Date.now() - startedAt,
     server: proc.serverInfo ?? null,
   }
   console.log(JSON.stringify(report, null, 2))
   if (!report.ok) {
-    console.error(`unica-native selftest: workspace root ${root} does not match ${cwd}`)
+    console.error(
+      workspace === 'mismatched'
+        ? `unica-native selftest: workspace root ${root} does not match ${cwd}`
+        : `unica-native selftest: unica listed no tools in ${cwd}`,
+    )
     process.exitCode = 1
   }
 } catch (error) {
