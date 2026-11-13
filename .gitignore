@@ -32,6 +32,12 @@ build-report.json
 .dsh-cache/
 .unica-cache/
 
+# unica keeps its index cache inside the workspace it was opened on — here that is
+# `.build/unica/`, and the accompanying `.runner-project.lock` is held while a
+# process for that workspace is alive. Per-machine and per-moment, like the
+# runtime cache above.
+.build/
+
 # Scratch directories used while testing the installer and the wrappers.
 #
 # These are matched by prefix on purpose: a fixed list of names had already let
