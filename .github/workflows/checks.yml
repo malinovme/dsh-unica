@@ -30,6 +30,31 @@ jobs:
         run: |
           node -e "if (require('node:fs').readFileSync('dsh-unica-plugin/bootstrap/launch.mjs','utf8').includes('\r')) throw new Error('launcher contains CRLF')"
 
+      # The documented Windows entry point is `irm ... | iex`, and Invoke-RestMethod
+      # on PowerShell 7 keeps a UTF-8 BOM as U+FEFF in the string it returns. The
+      # parser then stops with "Unexpected attribute 'CmdletBinding'" before a
+      # single line runs — which is how 0.15.0.3 shipped. Parsing the text the way
+      # irm hands it over is the whole point: a `-File install.ps1` run never sees
+      # the BOM and stayed green while the one-liner was broken. ASCII-only is the
+      # other half, because Windows PowerShell 5.1 reads a BOM-less script as ANSI.
+      - name: install.ps1 parses as irm returns it, and is ASCII-only
+        shell: pwsh
+        run: |
+          $bytes = [IO.File]::ReadAllBytes('install.ps1')
+          if ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+            throw 'install.ps1 starts with a UTF-8 BOM: irm | iex fails on PowerShell 7'
+          }
+          $i = 0
+          while ($i -lt $bytes.Length -and $bytes[$i] -le 0x7F) { $i++ }
+          if ($i -ne $bytes.Length) { throw "install.ps1 is not ASCII at byte $i" }
+
+          $text = [Text.Encoding]::UTF8.GetString($bytes)
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$null, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            throw "install.ps1 does not parse the way irm returns it: $($errors[0].Message)"
+          }
+
       # 26 skills cite ../../references/...; this proves every citation resolves
       # to a file that is actually committed. Regenerating skills after an
       # upstream bump is exactly when this breaks.

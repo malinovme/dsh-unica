@@ -1,4 +1,4 @@
-﻿# Installs the DSH port of unica on Windows.
+# Installs the DSH port of unica on Windows.
 #
 #   irm https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.ps1 | iex
 #
@@ -7,9 +7,13 @@
 # which owns every decision about profiles and cache paths. That keeps one
 # implementation of the install logic, written once in Node.
 #
-# The file is deliberately ASCII-only: Windows PowerShell 5.1 reads a BOM-less
-# script as ANSI, so a stray em dash in a comment breaks parsing on the very
-# machines this script is for.
+# The file is deliberately ASCII-only and BOM-less. ASCII-only because Windows
+# PowerShell 5.1 reads a BOM-less script as ANSI, so a stray em dash in a comment
+# would break parsing on the very machines this script is for. BOM-less because
+# `irm ... | iex` is the documented entry point, and Invoke-RestMethod on
+# PowerShell 7 keeps a UTF-8 BOM as U+FEFF: the attribute list then stops being
+# the first thing the parser sees and the run dies with "Unexpected attribute
+# 'CmdletBinding'" before a single line executes.
 #
 # Parameters:
 #   -Version v0.15.0.3   release tag to install (default: the latest)
@@ -18,7 +22,10 @@
 #   -DshHome C:\...\.dsh DSH home; normally taken from the environment
 #   -NoVerify            skip the native self-test after installing
 #   -Target preset       preset | profile | both
-[CmdletBinding()]
+#
+# No [CmdletBinding()] on purpose: it is a statement attribute, and the text
+# `irm ... | iex` evaluates is not a script file, so a host that accepts the
+# attribute only at the head of a file rejects it. Nothing below needs it.
 param(
   [string]$Version,
   [string]$Profile,
