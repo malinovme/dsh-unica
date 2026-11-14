@@ -71,6 +71,22 @@ test('concurrent DSH sessions use separate workers and reuse their own workspace
   assert.deepEqual(againB, { ...b, calls: 2 })
 })
 
+test('a warm worker survives a concurrent call in another project at maxProcesses 1', async (t) => {
+  const { root, config } = await setup(t)
+  const first = join(root, 'first')
+  const second = join(root, 'second')
+  await Promise.all([mkdir(first), mkdir(second)])
+  const view = await registerView(t, { ...config, maxProcesses: 1 }, new Map([['a', first], ['b', second]]))
+  const warm = await view('a')
+
+  const [a, b] = await Promise.all([view('a'), view('b')])
+  assert.equal(a.workspaceRoot, first)
+  assert.equal(a.pid, warm.pid)
+  assert.equal(a.calls, 2)
+  assert.equal(b.workspaceRoot, second)
+  assert.notEqual(b.pid, a.pid)
+})
+
 test('cancelling a caller during initialize leaves the shared startup available to its peer', async (t) => {
   const { root, config } = await setup(t)
   const cwd = join(root, 'project')
