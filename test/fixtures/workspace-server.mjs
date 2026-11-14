@@ -32,7 +32,7 @@ for await (const line of createInterface({ input: process.stdin })) {
   const replies = {
     initialize: { serverInfo: { name: 'workspace-fixture' } },
     'tools/list': { tools: [{ name: 'unica.view' }] },
-    'tools/call': { content: [], structuredContent: { data: { workspaceRoot: process.cwd(), pid: process.pid, calls: calls.length } } },
+    'tools/call': { content: [], structuredContent: { data: { workspaceRoot: process.cwd(), pid: process.pid, launcherPid: process.ppid, calls: calls.length } } },
   }
   console.log(JSON.stringify({ jsonrpc: '2.0', id, result: replies[method] }))
 }

@@ -127,6 +127,19 @@ test('slow initialize uses the startup budget and the pool retries a timed-out h
   }
 })
 
+async function waitForProcessExit(pid) {
+  assert.ok(Number.isInteger(pid) && pid > 0)
+  await waitFor(() => {
+    try {
+      process.kill(pid, 0)
+      return false
+    } catch (error) {
+      if (error.code === 'ESRCH') return true
+      throw error
+    }
+  }, `process ${pid} to exit`)
+}
+
 test('closeAll during initialize stops the worker and rejects every waiting call', async (t) => {
   const { root, config } = await setup(t)
   const gate = join(root, 'hold-initialize')
@@ -141,18 +154,7 @@ test('closeAll during initialize stops the worker and rejects every waiting call
     const launcherPid = Number(await readFile(join(root, 'launcher-pid'), 'utf8'))
     pool.closeAll()
     pool.closeAll()
-    for (const pid of [serverPid, launcherPid]) {
-      assert.ok(pid > 0)
-      await waitFor(() => {
-        try {
-          process.kill(pid, 0)
-          return false
-        } catch (error) {
-          if (error.code === 'ESRCH') return true
-          throw error
-        }
-      }, `process ${pid} to exit while initialize is still blocked`)
-    }
+    await Promise.all([serverPid, launcherPid].map(waitForProcessExit))
     for (const result of await waiting) {
       assert.equal(result.status, 'rejected')
       assert.match(result.reason.message, /plugin unloaded/)
@@ -170,12 +172,14 @@ test('closeAll prevents dispatch to an already acquired warm worker', async (t) 
   const { root, config } = await setup(t)
   const pool = new ProcPool(config)
   try {
-    await pool.withProc(root, (proc) => proc.listTools())
+    const view = await pool.withProc(root, (proc) => proc.callTool('unica.view', {}))
+    const { pid, launcherPid } = view.structuredContent.data
     const tool = t.mock.fn()
     const queued = pool.withProc(root, tool)
     pool.closeAll()
     await assert.rejects(queued, /plugin unloaded/)
     assert.equal(tool.mock.callCount(), 0)
+    await Promise.all([pid, launcherPid].map(waitForProcessExit))
   } finally {
     pool.closeAll()
   }
