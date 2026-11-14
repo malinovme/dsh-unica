@@ -12,6 +12,22 @@ permissions:
   contents: read
 
 jobs:
+  shared-runtime-cache:
+    name: Concurrent runtime publication (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Initialize two launchers against a cold shared cache
+        run: node --test test/cache-publication.test.mjs
+
   price-extension:
     name: Price calculator tutorial (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

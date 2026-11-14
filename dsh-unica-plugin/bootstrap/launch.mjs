@@ -241,15 +241,9 @@ async function installArtifact(name) {
     `${JSON.stringify({ artifact: name, version: entry.artifact.version, target: wanted, assetSha256: entry.descriptor.asset.sha256 }, null, 2)}\n`,
     'utf8',
   )
-  // Another process may have published the same artifact while this one was
-  // downloading. Its copy is just as verified, and replacing a directory a live
-  // server is running from is worse than keeping it, so defer to it.
-  if (existsSync(entry.marker)) {
-    await rm(scratch, { recursive: true, force: true })
-    return entry
-  }
-  // The rename is what makes the cache appear ready only once it *is* ready.
-  await rm(entry.dir, { recursive: true, force: true })
+  // A published directory is nonempty (it contains the marker). rename cannot
+  // replace it: the first publisher wins, and other launchers reuse its copy.
+  // Never remove the destination here; it can already be serving another cwd.
   await mkdir(dirname(entry.dir), { recursive: true })
   try {
     await rename(scratch, entry.dir)
