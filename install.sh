@@ -276,7 +276,20 @@ fi
 draft_dir="$TX/draft"
 mkdir "$draft_dir"
 draft="$draft_dir/cordis.patch.yml"
-draft_profile="$(node -p 'require("node:path").relative(process.argv[1], process.argv[2])' -- "$DSH_HOME/profiles" "$draft_dir")"
+draft_profile="$(node -e '
+  const { realpathSync } = require("node:fs")
+  const { basename, dirname, join, relative, resolve } = require("node:path")
+  // install.mjs resolves existing ancestors of DSH_HOME even on first install.
+  function physicalHome(path) {
+    try { return realpathSync.native(path) }
+    catch (error) {
+      if (error.code !== "ENOENT") throw error
+      return join(physicalHome(dirname(path)), basename(path))
+    }
+  }
+  const home = physicalHome(resolve(process.argv[1]))
+  process.stdout.write(relative(join(home, "profiles"), realpathSync.native(process.argv[2])))
+' -- "$DSH_HOME" "$draft_dir")"
 if [ -f "$PATCH" ]; then
   cp -p "$PATCH" "$TX/profile"
   cp -p "$TX/profile" "$draft"
