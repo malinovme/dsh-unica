@@ -38,12 +38,15 @@ export class ProcPool {
 
   /** Run `fn` against the process for `cwd`, creating it on demand. */
   async withProc(cwd, fn, signal) {
-    const entry = await this.#acquire(cwd, signal)
     if (this.#closed) throw new Error(UNLOADED)
     signal?.throwIfAborted()
+    const entry = this.#getEntry(cwd)
+    // Reserve before yielding so another workspace cannot evict this worker.
     entry.busy += 1
-    entry.lastUsed = Date.now()
     try {
+      await this.#waitForStartup(entry.started, signal)
+      if (this.#closed) throw new Error(UNLOADED)
+      signal?.throwIfAborted()
       return await fn(entry.proc)
     } finally {
       entry.busy -= 1
@@ -51,21 +54,25 @@ export class ProcPool {
     }
   }
 
-  async #acquire(cwd, signal) {
-    if (this.#closed) throw new Error(UNLOADED)
-    signal?.throwIfAborted()
+  #getEntry(cwd) {
     const existing = this.#entries.get(cwd)
     if (existing !== undefined && existing.proc.alive) return existing
 
-    let pending = this.#pending.get(cwd)
-    if (pending === undefined) {
+    let entry = this.#pending.get(cwd)
+    if (entry === undefined) {
       const proc = new UnicaProc({ cwd, config: this.config, log: this.log })
-      const started = this.#start(cwd, proc).finally(() => this.#pending.delete(cwd))
-      pending = { proc, started }
-      this.#pending.set(cwd, pending)
+      entry = { proc, busy: 0, lastUsed: Date.now() }
+      entry.started = this.#start(cwd, entry).finally(() => {
+        entry.started = undefined
+        this.#pending.delete(cwd)
+      })
+      this.#pending.set(cwd, entry)
     }
-    const { started } = pending
-    if (!signal) return started
+    return entry
+  }
+
+  async #waitForStartup(started, signal) {
+    if (!started || !signal) return started
 
     // Only this caller stops waiting. Other calls may need the same handshake.
     let listener
@@ -79,7 +86,8 @@ export class ProcPool {
     }
   }
 
-  async #start(cwd, proc) {
+  async #start(cwd, entry) {
+    const { proc } = entry
     const stale = this.#entries.get(cwd)
     if (stale !== undefined) {
       stale.proc.close('unica process was replaced')
@@ -90,10 +98,9 @@ export class ProcPool {
     try {
       await proc.start()
       if (this.#closed) throw new Error(UNLOADED)
-      const entry = { proc, busy: 0, lastUsed: Date.now() }
+      entry.lastUsed = Date.now()
       this.#entries.set(cwd, entry)
       this.log?.info?.(`unica-native: started unica in ${cwd}`)
-      return entry
     } catch (error) {
       proc.close('unica process failed to start')
       if (!this.#closed) this.log?.error?.(`unica-native: failed to start unica in ${cwd}: ${error.message}`)
