@@ -153,10 +153,21 @@ function Get-DraftDirectory([string]$ProfilePath) {
   if ($name -notmatch '^\.unica-profile-[0-9a-f]{32}$') { Die "invalid draft name at $tx" }
   return Join-Path ([IO.Path]::GetDirectoryName($ProfilePath)) $name
 }
-function Publish-Profile([string]$ProfilePath) {
+function Complete-ProfilePublication([string]$ProfilePath, [switch]$Recover) {
   $draft = Join-Path (Get-DraftDirectory $ProfilePath) 'cordis.patch.yml'
-  & node -e $publishScript -- $draft $ProfilePath $savedProfile
-  if ($LASTEXITCODE -ne 0) { Die "could not publish profile at $ProfilePath" }
+  if ($Recover -and -not (Test-Path -LiteralPath $draft)) {
+    # v0.15.0.8 could delete the draft after replaying publication without
+    # marking it committed. Preserve the live profile, including later edits.
+    if (-not [IO.File]::Exists((Join-Path $tx 'prepared')) -or
+        (Test-Path -LiteralPath $stage) -or -not (Test-UnicaPlugin $install)) {
+      Die "cannot recover missing profile draft; recovery files retained at $tx"
+    }
+    Say "  keeping live profile after interrupted cleanup: $ProfilePath"
+  } else {
+    & node -e $publishScript -- $draft $ProfilePath $savedProfile
+    if ($LASTEXITCODE -ne 0) { Die "could not publish profile at $ProfilePath" }
+  }
+  [IO.File]::WriteAllText((Join-Path $tx 'committed'), '')
 }
 
 function Remove-FinishedTransaction {
@@ -220,7 +231,7 @@ try {
           Die "installer child $childId is still active"
         }
       }
-      if ([IO.File]::Exists((Join-Path $tx 'publishing-profile'))) { Publish-Profile $oldPatch }
+      if ([IO.File]::Exists((Join-Path $tx 'publishing-profile'))) { Complete-ProfilePublication $oldPatch -Recover }
       else { Restore-Transaction $oldPatch }
     }
     Remove-FinishedTransaction
@@ -323,8 +334,7 @@ server.unref()
     if (-not [IO.File]::Exists($draft)) { Die 'installer did not prepare a profile' }
     if (-not (Test-OriginalProfile $patch)) { Die "profile changed during update: $patch" }
     [IO.File]::WriteAllText((Join-Path $tx 'publishing-profile'), '')
-    Publish-Profile $patch
-    [IO.File]::WriteAllText((Join-Path $tx 'committed'), '')
+    Complete-ProfilePublication $patch
     Say "  installed to: $install"
   }
 } finally {
