@@ -158,14 +158,26 @@ process.exit(23)
     assert report["ok"] and report["tools"] == releases[old][1]["tools"] and report["workspace"] == "matched"
     print(f"Rollback restored {old}, profile SHA-256 {digest(baseline)} and a working runtime", flush=True)
 
-    install(new)
-    assert installed_files(plugin) == releases[new][0] and not transaction.exists()
-    updated = profile.read_bytes()
-    assert updated == candidate and updated.count(needle.encode()) == 1
-    for block in (USER_BEFORE, USER_AFTER):
-        assert updated.count(block.replace("\n", eol).encode()) == 1
-    verify_profile()
-    print(f"Upgrade to {new} preserved both user blocks byte-for-byte", flush=True)
+    def verify_new_files_and_settings():
+        assert installed_files(plugin) == releases[new][0]
+        updated = profile.read_bytes()
+        assert updated == candidate and updated.count(needle.encode()) == 1
+        for block in (USER_BEFORE, USER_AFTER):
+            assert updated.count(block.replace("\n", eol).encode()) == 1
+        verify_profile()
+        print(f"Upgrade to {new} preserved both user blocks byte-for-byte", flush=True)
+
+    try:
+        install(new)
+    except AssertionError:
+        # A committed upgrade can still exit nonzero during journal cleanup.
+        # Report the state on disk while keeping that installer failure visible.
+        if (transaction / "committed").is_file():
+            print("Installer failed after commit; checking files and live profile", flush=True)
+            verify_new_files_and_settings()
+        raise
+    verify_new_files_and_settings()
+    assert not transaction.exists()
 
     if version(new) >= (0, 15, 0, 6):
         # The two shutdown regressions were introduced in this revision. Relative
