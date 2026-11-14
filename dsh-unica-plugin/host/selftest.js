@@ -21,7 +21,11 @@ if (cwd === undefined) {
   process.exit(2)
 }
 
-const config = resolveConfig({ defaultCwd: cwd })
+const startupTimeout = flag('--startup-timeout-ms')
+const config = resolveConfig({
+  defaultCwd: cwd,
+  startupTimeoutMs: startupTimeout === undefined ? undefined : Number(startupTimeout),
+})
 const proc = new UnicaProc({ cwd, config, log: { info() {}, warn: console.error, error: console.error } })
 const startedAt = Date.now()
 

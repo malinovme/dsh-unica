@@ -35,11 +35,13 @@
 // dropped `$DSH_HOME/.agent-presets/` directory must not be written at all — a
 // preset left there is invisible to 0.2.0, which is exactly the failure this
 // installer previously produced.
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { readdir } from 'node:fs/promises'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { indentBlock } from './installer/profile-patch.mjs'
+import { updateProfileFile } from './installer/profile-file.mjs'
 import { harnessAsar, harnessRoots, readAsarFile } from './tools/lib/harness.mjs'
 
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)))
@@ -147,16 +149,6 @@ function cachePaths(cacheDir) {
     : { runtimes: join(root, 'runtimes'), state: join(root, 'provider-state') }
 }
 let CACHE = cachePaths(CACHE_ARG)
-let RUNTIMES = CACHE.runtimes
-let PROVIDER_STATE = CACHE.state
-
-const planned = []
-async function emit(path, content) {
-  planned.push(path)
-  if (DRY_RUN) return
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, content, 'utf8')
-}
 
 /** The runtime manifest this port ships: one descriptor per upstream target. */
 const RUNTIME_MANIFEST = JSON.parse(readFileSync(join(PLUGIN_ROOT, 'runtime-manifest.json'), 'utf8'))
@@ -177,10 +169,10 @@ const EXPECTED_TOOLS = 11
  * download and would look broken under the handshake's timeout. The launcher
  * writes this marker after it has verified and renamed the artifact into place.
  */
-function readyMarker() {
+function readyMarker(runtimes) {
   const core = RUNTIME_MANIFEST.artifacts?.unica?.targets?.[LAUNCH.target]
-  if (core === undefined) return join(RUNTIMES, RUNTIME_MANIFEST.pluginVersion, LAUNCH.target, '.ready.json')
-  return join(RUNTIMES, 'unica', `${RUNTIME_MANIFEST.artifacts.unica.version}--${core.asset.sha256}`, LAUNCH.target, '.ready.json')
+  if (core === undefined) return join(runtimes, RUNTIME_MANIFEST.pluginVersion, LAUNCH.target, '.ready.json')
+  return join(runtimes, 'unica', `${RUNTIME_MANIFEST.artifacts.unica.version}--${core.asset.sha256}`, LAUNCH.target, '.ready.json')
 }
 
 /**
@@ -195,18 +187,18 @@ function readyMarker() {
  *
  * @returns `{ ok, tools, server, root, stderr, ms }`
  */
-function nativeSelftest() {
-  const budget = existsSync(readyMarker()) ? SMOKE_TIMEOUT_MS : COLD_TIMEOUT_MS
+function nativeSelftest(cache) {
+  const budget = existsSync(readyMarker(cache.runtimes)) ? SMOKE_TIMEOUT_MS : COLD_TIMEOUT_MS
   if (budget === COLD_TIMEOUT_MS) {
     console.log(`  runtime       : not cached yet — downloading and verifying it first, this can take minutes`)
   }
-  const args = [join(PLUGIN_ROOT, 'host', 'selftest.js'), '--cwd', VERIFY_CWD]
+  const args = [join(PLUGIN_ROOT, 'host', 'selftest.js'), '--cwd', VERIFY_CWD, '--startup-timeout-ms', String(budget)]
   return new Promise((resolve) => {
     const child = spawn(process.execPath, args, {
       env: {
         ...process.env,
-        UNICA_RUNTIME_CACHE_DIR: RUNTIMES,
-        UNICA_PROVIDER_STATE_DIR: PROVIDER_STATE,
+        UNICA_RUNTIME_CACHE_DIR: cache.runtimes,
+        UNICA_PROVIDER_STATE_DIR: cache.state,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -219,7 +211,7 @@ function nativeSelftest() {
       settled = true
       clearTimeout(timer)
       child.kill()
-      resolve({ ...result, stderr, ms: result.ms ?? Date.now() - started })
+      resolve({ ...result, stderr: [stderr.trimEnd(), result.stderr].filter(Boolean).join('\n'), ms: result.ms ?? Date.now() - started })
     }
     const timer = setTimeout(() => finish({ ok: false, stderr: `self-test did not finish in ${budget / 1000} s` }), budget)
     child.on('error', (error) => finish({ ok: false, stderr: String(error.message) }))
@@ -244,38 +236,18 @@ function nativeSelftest() {
   })
 }
 
-/**
- * The refusal the cache directory can cause, and the only one this tool repairs.
- *
- * The bootstrap writes lock and transaction files next to the runtime. When the
- * directory mask refuses that it exits within ~20 ms with
- * `unica-bootstrap: Отказано в доступе. (os error 5)`, the bridge reports no
- * working tools, and the session looks like a broken install — a symptom three
- * steps away from its cause.
- *
- * Timing is the reliable signal, not the wording: a cold cache spends minutes
- * downloading and says little, while a refusal is over before the process can
- * print anything useful. Matching the message as well would tie this to the
- * bootstrap's locale, and the same refusal arrives in a different language on a
- * different machine.
- */
-function isAccessRefusal(result) {
-  if (result.ok) return false
-  const message = result.stderr ?? ''
-  if (/Access is denied|Отказано в доступе|os error 5/i.test(message)) return true
-  // A refusal is over before the server can print a catalog: a fast exit, a
-  // non-zero status, and no tools reported at all. This used to compare
-  // `result.code` with 0 without anything ever setting it, so `undefined !== 0`
-  // held and *every* failure under two seconds read as a refused cache — which is
-  // how a selftest that failed for an unrelated reason moved a working 676 MB
-  // cache aside and sent the install back to a cold download.
-  return (
-    result.code !== undefined &&
-    result.code !== 0 &&
-    result.ms !== undefined &&
-    result.ms < 2_000 &&
-    result.tools === undefined
-  )
+/** Recognize a permission error on the daemon state root or an operation inside this cache. */
+function isAccessRefusal(result, cache) {
+  return result.stderr.split(/\r?\n/).some((line) => {
+    if (!/\b(EACCES|EPERM)\b|permission denied|access (?:is )?denied|отказано в доступе|os error 5\b/i.test(line)) return false
+    if (/open daemon provider state root:\s*(?:access (?:is )?denied|permission denied|отказано в доступе|(?:EACCES|EPERM)\b)/i.test(line)) return true
+    const normalize = (path) => process.platform === 'win32' ? path.replaceAll('\\', '/').toLowerCase() : path
+    const message = normalize(line)
+    return [cache.runtimes, cache.state].some((path) => {
+      const root = normalize(path)
+      return [root + '/', root + "'", root + '"'].some((prefix) => message.includes(prefix)) || message.endsWith(root)
+    })
+  })
 }
 
 /**
@@ -286,65 +258,6 @@ function isAccessRefusal(result) {
  */
 function relocationTarget() {
   return join(dirname(PLUGIN_ROOT), '.unica-cache')
-}
-
-/** Adds `indent` to every non-empty line; blank lines stay blank. */
-function indentBlock(text, indent) {
-  return text
-    .split('\n')
-    .map((line) => (line.trim() === '' ? '' : indent + line))
-    .join('\n')
-}
-
-/** Leading-space width of a line. */
-function indentWidth(line) {
-  return line.match(/^( *)/)[1].length
-}
-
-/**
- * Locates a TOP-LEVEL `- id:` entry.
- *
- * Deliberately not a regex: `^- id: x$` with the multiline flag also matches the
- * indented child rows of an `- insert:` list, and acting on that match removed a
- * sibling entry instead of the intended one.
- *
- * @returns `{ at, end }` line indices, or `undefined`
- */
-function findTopLevelEntry(lines, id) {
-  for (let i = 0; i < lines.length; i += 1) {
-    if (indentWidth(lines[i]) === 0 && lines[i] === `- id: ${id}`) {
-      return { at: i, end: findEntryEnd(lines, i) }
-    }
-  }
-  return undefined
-}
-
-/**
- * Last line index (exclusive) of the entry starting at `at`.
- *
- * The entry ends where the next line in column 1 begins; section comments inside
- * it are indented in neither case, so they travel with the entry they precede.
- */
-function findEntryEnd(lines, at) {
-  for (let i = at + 1; i < lines.length; i += 1) {
-    if (lines[i].trim() === '') continue
-    if (indentWidth(lines[i]) === 0 && !lines[i].startsWith('#')) return i
-  }
-  return lines.length
-}
-
-/**
- * Removes the top-level entry with this id, keeping everything else intact.
- *
- * @returns the new file text, or `undefined` when the id has no top-level entry
- */
-function removeTopLevelEntry(text, id) {
-  const lines = text.split('\n')
-  const found = findTopLevelEntry(lines, id)
-  if (found === undefined) return undefined
-  const head = lines.slice(0, found.at).join('\n').replace(/[ \t]*\n+$/, '')
-  const tail = lines.slice(found.end).join('\n').replace(/^\n+/, '')
-  return `${head}${tail === '' ? '' : `\n\n${tail.replace(/[ \t]*\n*$/, '')}`}\n`
 }
 
 /** The bridge row name: a file URL, because the loader resolves module specifiers. */
@@ -359,11 +272,11 @@ const NATIVE_ENTRY = pathToFileURL(join(PLUGIN_ROOT, 'host', 'index.js')).href
  */
 function nativeRow() {
   return `- id: unica-native
-  name: '${NATIVE_ENTRY}'
+  name: ${JSON.stringify(NATIVE_ENTRY)}
   config:
-    pluginRoot: '${PLUGIN_ROOT}'
-    runtimeCacheDir: '${RUNTIMES}'
-    providerStateDir: '${PROVIDER_STATE}'
+    pluginRoot: ${JSON.stringify(PLUGIN_ROOT)}
+    runtimeCacheDir: ${JSON.stringify(CACHE.runtimes)}
+    providerStateDir: ${JSON.stringify(CACHE.state)}
     maxProcesses: 4
     idleMs: 600000
     toolCallTimeoutMs: 600000
@@ -384,7 +297,7 @@ function profilePatchBody() {
     providerName: unica-plugin
     includeDefaultRoots: false
     customSkillDirs:
-      - '${SKILLS}'
+      - ${JSON.stringify(SKILLS)}
     watch: false
 `
 }
@@ -544,7 +457,7 @@ ${nativeRow()}
     providerName: unica-plugin
     includeDefaultRoots: false
     customSkillDirs:
-      - '${SKILLS}'
+      - ${JSON.stringify(SKILLS)}
     watch: false
 `
   const composition = `${withRules.trimEnd()}\n${bridgeRows}`.replace(/\s*$/, '')
@@ -651,186 +564,31 @@ function templateRows(templateText) {
   return `${rows}\n`
 }
 
-/**
- * Splits a generated block into its top-level `- id:` entries.
- *
- * A patch addresses entries by id, so every entry has to be applied on its own:
- * upserting a block of two entries as one unit would append one of them twice.
- */
-function splitEntries(block) {
-  const lines = block.trimEnd().split('\n')
-  const starts = []
-  for (let i = 0; i < lines.length; i += 1) {
-    if (/^- id: \S/.test(lines[i])) starts.push(i)
-  }
-  if (starts.length === 0) throw new Error('an entry block without a top-level `- id:` row cannot be applied by id')
-  return starts.map((start, n) => lines.slice(start, n + 1 < starts.length ? starts[n + 1] : lines.length).join('\n').replace(/\s*$/, ''))
-}
-
-/**
- * Drops the child row `id` from every `- insert:` list that carries it.
- *
- * The installer writes top-level entries, so a row left inside an older
- * install's `- insert:` list is not rewritten in place — it is taken out, and
- * the entry is written at top level afterwards. Two tasks with one id is what
- * DSH refuses to load, so leaving both is not an option.
- *
- * @returns `{ text, removed }`
- */
-function removeInsertChild(text, id) {
-  const lines = text.split('\n')
-  const out = []
-  let removed = 0
-  for (let i = 0; i < lines.length; i += 1) {
-    if (indentWidth(lines[i]) !== 0 || lines[i] !== '- insert:') {
-      out.push(lines[i])
-      continue
-    }
-    const end = findEntryEnd(lines, i)
-    const payload = lines.slice(i + 1, end)
-    let width = 0
-    for (const line of payload) {
-      if (line.trim() !== '' && !line.startsWith('#')) {
-        width = indentWidth(line)
-        break
-      }
-    }
-    const child = `${' '.repeat(width)}- id: ${id}`
-    const kept = []
-    for (let j = 0; j < payload.length; j += 1) {
-      if (width > 0 && indentWidth(payload[j]) === width && payload[j] === child) {
-        // The row owns the comment block directly above it.
-        while (kept.length > 0 && kept[kept.length - 1].trimStart().startsWith('#')) kept.pop()
-        j += 1
-        while (j < payload.length && !(indentWidth(payload[j]) === width && payload[j].startsWith('- '))) j += 1
-        j -= 1
-        removed += 1
-        continue
-      }
-      kept.push(payload[j])
-    }
-    out.push(lines[i], ...kept)
-    i = end - 1
-  }
-  return { text: out.join('\n'), removed }
-}
-
-/**
- * Drops `- insert:` entries that no longer hold any child.
- *
- * Taking a row out of a list can leave its empty parent behind, and an empty
- * `insert:` is an entry DSH cannot make sense of.
- *
- * @returns `{ text, removed }`
- */
-function removeEmptyInserts(text) {
-  const lines = text.split('\n')
-  const out = []
-  let removed = 0
-  for (let i = 0; i < lines.length; i += 1) {
-    if (/^- insert:\s*$/.test(lines[i])) {
-      let j = i + 1
-      while (j < lines.length && lines[j].trim() === '') j += 1
-      if (j >= lines.length || /^- /.test(lines[j])) {
-        removed += 1
-        // Swallow the blank separator this entry owned, so no double blank line
-        // is left where it stood.
-        while (i + 1 < lines.length && lines[i + 1].trim() === '') i += 1
-        continue
-      }
-    }
-    out.push(lines[i])
-  }
-  return { text: out.join('\n'), removed }
-}
-
-/**
- * Normalises a profile patch before editing it.
- *
- * Every anchor in this file ends a line, and a Windows editor writes CRLF, so a
- * `^`-to-`$` match would silently miss — which once produced a duplicate
- * `mcp-unica` row instead of an error. The BOM some editors prepend is dropped
- * for the same reason: it would sit in front of the first entry.
- *
- * @returns `{ text, eol }` where eol is restored on the way out
- */
-function normalizePatch(text) {
-  const eol = text.includes('\r\n') ? '\r\n' : '\n'
-  return { text: text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n'), eol }
-}
-
-/**
- * Applies one row to a profile patch, reporting exactly what happened.
- *
- * @returns a line for the install summary
- */
-async function patchProfile(profile, banner, block, label, legacyIds = []) {
-  const path = join(DSH_HOME, 'profiles', profile, 'cordis.patch.yml')
-  const raw = existsSync(path) ? await readFile(path, 'utf8') : ''
-  const { text: existing, eol } = normalizePatch(raw)
-  const rows = splitEntries(block)
-  const ids = rows.map((row) => /^- id: (\S+)$/m.exec(row)[1])
-
-  let text = existing
-  const notes = []
-  // A native-only release replaces the old MCP row: leaving it would register a
-  // second set of tools under the same names.
-  for (const legacy of legacyIds) {
-    const stripped = removeInsertChild(text, legacy)
-    if (stripped.removed > 0) {
-      text = stripped.text
-      notes.push(`${legacy}: removed the retired MCP row`)
-    }
-    const dropped = removeTopLevelEntry(text, legacy)
-    if (dropped !== undefined) {
-      text = dropped
-      notes.push(`${legacy}: removed the retired top-level row`)
-    }
-  }
-  for (const id of ids) {
-    const stripped = removeInsertChild(text, id)
-    if (stripped.removed > 0) {
-      text = stripped.text
-      notes.push(`${id}: rewritten from a nested \`- insert:\` child`)
-    }
-    const deduped = removeTopLevelEntry(text, id)
-    if (deduped !== undefined) {
-      text = deduped
-      notes.push(`${id}: replaced a top-level entry, which a patch cannot declare`)
-    }
-  }
-
-  const entry = `- insert:\n${indentBlock(rows.join('\n\n'), '    ')}`
-  text = `${text.replace(/[ \t]*\n*$/, '')}\n\n${entry}\n`
-  text = removeEmptyInserts(text).text
-  if (existing.trim() === '') text = `${banner}${text}`
-
-  await emit(path, eol === '\r\n' ? text.replace(/\n/g, '\r\n') : text)
-  const detail = notes.length === 0 ? '' : ` — ${notes.join('; ')}`
-  return `  ${label}: ${ids.join(', ')} in ${path}${detail}`
-}
-
-/**
- * Writes everything the install owns and returns the report lines.
- *
- * Kept separate from `main` because `--verify` may have to run it a second time,
- * with the cache somewhere else.
- *
- * @returns one line per patched profile, plus where the template came from
- */
 async function applyProfile() {
-  const summary = []
-  if (TARGET === 'profile' || TARGET === 'both') {
-    summary.push(await patchProfile(PATCH_PROFILE, PROFILE_BANNER, profilePatchBody(), 'profile rows', ['mcp-unica']))
+  const updates = new Map()
+  function add(profile, label, block) {
+    const path = join(DSH_HOME, 'profiles', profile, 'cordis.patch.yml')
+    if (!updates.has(path)) updates.set(path, [])
+    updates.get(path).push({ label, block, banner: PROFILE_BANNER, legacyIds: ['mcp-unica'] })
   }
+
+  if (TARGET === 'profile' || TARGET === 'both') add(PATCH_PROFILE, 'profile rows', profilePatchBody())
+  let template
   if (TARGET === 'preset' || TARGET === 'both') {
-    const template = standardTemplate()
-    summary.push(
-      await patchProfile(PRESET_PROFILE, PROFILE_BANNER, presetRow(templateRows(template.text)), 'agent preset', ['mcp-unica']),
-    )
-    summary.push(`  preset template: ${template.path}`)
+    template = standardTemplate()
+    add(PRESET_PROFILE, 'agent preset', presetRow(templateRows(template.text)))
   }
-  return summary
+
+  const summary = []
+  for (const [path, edits] of updates) {
+    const reports = await updateProfileFile(path, edits, { dryRun: DRY_RUN })
+    for (const { label, ids, notes } of reports) {
+      const detail = notes.length === 0 ? '' : ` — ${notes.join('; ')}`
+      summary.push(`  ${label}: ${ids.join(', ')} in ${path}${detail}`)
+    }
+  }
+  if (template) summary.push(`  preset template: ${template.path}`)
+  return { summary, paths: [...updates.keys()] }
 }
 
 async function main() {
@@ -838,7 +596,7 @@ async function main() {
   if (skillsCount === 0) throw new Error(`no bundled skills found at ${SKILLS} — run build-skills.mjs first`)
   if (!existsSync(LAUNCH.exe)) throw new Error(`unica bootstrap for ${LAUNCH.platform}/${LAUNCH.arch} not found at ${LAUNCH.exe}`)
 
-  let summary = await applyProfile()
+  let installation = await applyProfile()
 
   // `--verify` is what turns "the files were written" into "the tools work".
   // Only the self-test proves the last one, and a refused cache directory is the
@@ -847,19 +605,19 @@ async function main() {
   let verified
   let relocated = false
   if (VERIFY && !DRY_RUN) {
-    verified = await nativeSelftest()
+    verified = await nativeSelftest(CACHE)
     // Only a refused cache is repaired, and the refusal is what tells us so: a
     // download that merely ran long must not move the cache behind the user's
     // back, or the runtime would be fetched twice.
-    if (!verified.ok && isAccessRefusal(verified)) {
-      const target = relocationTarget()
-      console.log(`\nthe bootstrap was refused at ${RUNTIMES} — moving the cache to ${target}`)
-      CACHE = cachePaths(target)
-      RUNTIMES = CACHE.runtimes
-      PROVIDER_STATE = CACHE.state
-      summary = await applyProfile()
-      verified = await nativeSelftest()
-      relocated = verified.ok
+    if (!verified.ok && CACHE_ARG === undefined && isAccessRefusal(verified, CACHE)) {
+      const fallback = cachePaths(relocationTarget())
+      console.log(`\nthe default cache refused access — testing ${fallback.runtimes}`)
+      verified = await nativeSelftest(fallback)
+      if (verified.ok) {
+        CACHE = fallback
+        installation = await applyProfile()
+        relocated = true
+      }
     }
   }
 
@@ -868,12 +626,12 @@ async function main() {
   console.log(`  launch        : ${LAUNCH.kind} — ${LAUNCH.command} ${LAUNCH.args.map((a) => `'${a}'`).join(' ')}`)
   console.log(`  platform      : ${LAUNCH.platform}/${LAUNCH.arch}`)
   console.log(`  skills        : ${skillsCount} directories at ${SKILLS}`)
-  console.log(`  runtime cache : ${RUNTIMES}`)
-  console.log(`  provider state: ${PROVIDER_STATE}`)
+  console.log(`  runtime cache : ${CACHE.runtimes}`)
+  console.log(`  provider state: ${CACHE.state}`)
   console.log('  profile patch:')
-  for (const line of summary) console.log(line)
+  for (const line of installation.summary) console.log(line)
   console.log('  files:')
-  for (const p of new Set(planned)) console.log(`    ${p}`)
+  for (const p of installation.paths) console.log(`    ${p}`)
 
   if (!VERIFY) {
     console.log(
@@ -903,7 +661,7 @@ async function main() {
     }
     if (relocated) {
       console.log(
-        `    note    the default cache location refused the bootstrap, so this install uses ${dirname(RUNTIMES)}.\n` +
+        `    note    the default cache location refused the bootstrap, so this install uses ${dirname(CACHE.runtimes)}.\n` +
           `            That is a directory-permission problem on this machine, not a problem with the port.`,
       )
     }
@@ -916,7 +674,7 @@ async function main() {
 
   const reason = verified.stderr.trim().split('\n').at(-1) ?? ''
   console.log(
-    `    FAIL    ${reason !== '' ? reason : `unica did not answer within ${SMOKE_TIMEOUT_MS / 1000} s`}`,
+    `    FAIL    ${reason || `self-test exited with code ${verified.code ?? 'unknown'} without a diagnostic`}`,
   )
   console.log(
     `\nThe profile was still patched, and DSH will report the preset as failed to load until this is\n` +

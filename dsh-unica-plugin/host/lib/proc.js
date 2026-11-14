@@ -33,6 +33,8 @@ export class UnicaProc {
     const launcher = join(this.config.pluginRoot, 'bootstrap', 'launch.mjs')
     const env = {
       ...process.env,
+      // Native sessions supply cwd to spawn. The launcher's manual pin must not override it.
+      UNICA_WORKSPACE_ROOT: '',
       UNICA_RUNTIME_CACHE_DIR: this.config.runtimeCacheDir,
       UNICA_PROVIDER_STATE_DIR: this.config.providerStateDir,
       UNICA_ARTIFACT_DELIVERY: this.config.artifactDelivery,
@@ -45,6 +47,7 @@ export class UnicaProc {
     })
 
     this.#child.stdout.setEncoding('utf8')
+    this.#child.stdin.on('error', (error) => this.#failAll(error))
     this.#child.stdout.on('data', (chunk) => this.#onData(chunk))
     this.#child.stderr.setEncoding('utf8')
     this.#child.stderr.on('data', (chunk) => {
@@ -79,17 +82,19 @@ export class UnicaProc {
   }
 
   request(method, params, { signal, timeoutMs = this.config.toolCallTimeoutMs } = {}) {
+    if (signal?.aborted) return Promise.reject(new Error(`unica ${method} was canceled`))
     if (!this.alive) return Promise.reject(new Error('unica process is not running'))
     const id = this.#nextId++
     const frame = JSON.stringify({ jsonrpc: '2.0', id, method, params })
 
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.#settle(id, () => reject(new Error(`unica ${method} timed out after ${timeoutMs} ms`)))
-      }, timeoutMs)
-      const onAbort = () => {
-        this.#settle(id, () => reject(new Error(`unica ${method} was canceled`)))
+      const cancel = (reason) => {
+        if (this.#reject(id, new Error(reason)) && method !== 'initialize') {
+          this.notify('notifications/cancelled', { requestId: id, reason })
+        }
       }
+      const timer = setTimeout(() => cancel(`unica ${method} timed out after ${timeoutMs} ms`), timeoutMs)
+      const onAbort = () => cancel(`unica ${method} was canceled`)
       signal?.addEventListener('abort', onAbort, { once: true })
 
       this.#pending.set(id, {
@@ -107,7 +112,7 @@ export class UnicaProc {
       })
 
       this.#child.stdin.write(`${frame}\n`, (error) => {
-        if (error) this.#settle(id, () => reject(error))
+        if (error) this.#reject(id, error)
       })
     })
   }
@@ -183,11 +188,12 @@ export class UnicaProc {
     }
   }
 
-  #settle(id, action) {
+  #reject(id, error) {
     const pending = this.#pending.get(id)
-    if (pending === undefined) return
+    if (pending === undefined) return false
     this.#pending.delete(id)
-    action()
+    pending.reject(error)
+    return true
   }
 
   #failAll(error) {

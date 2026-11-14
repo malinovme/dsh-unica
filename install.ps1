@@ -101,46 +101,94 @@ Say "  archive : $base/$Asset"
 # TLS 1.2 is not the default on every Windows PowerShell in the wild, and the
 # download then fails with an unhelpful error.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+function Test-UnicaPlugin([string]$Directory) {
+  $package = Join-Path $Directory 'package.json'
+  if (-not [IO.File]::Exists((Join-Path $Directory 'install.mjs')) -or -not [IO.File]::Exists($package)) { return $false }
+  return (([IO.File]::ReadAllText($package) | ConvertFrom-Json).name -ceq 'dsh-plugin-unica')
+}
+
+$code = 1
+$ownsTransaction = $false
+$committed = $false
+$publishing = $false
+$restorePatch = $false
 try {
   Invoke-WebRequest -Uri "$base/$Asset" -OutFile (Join-Path $work $Asset) -UseBasicParsing
   Invoke-WebRequest -Uri "$base/$Asset.sha256.json" -OutFile (Join-Path $work "$Asset.sha256.json") -UseBasicParsing
-} catch {
-  Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
-  Die "cannot download from $base - check the version and that the release is published. $($_.Exception.Message)"
-}
+  $manifest = Get-Content -LiteralPath (Join-Path $work "$Asset.sha256.json") -Raw | ConvertFrom-Json
+  $actual = (Get-FileHash -LiteralPath (Join-Path $work $Asset) -Algorithm SHA256).Hash.ToLower()
+  if ($manifest.sha256 -ne $actual) { Die "checksum mismatch: expected $($manifest.sha256), got $actual." }
+  Say "  sha256  : ok"
 
-# -- verify -----------------------------------------------------------------
-# The manifest is the published one, so this proves the bytes arrived intact
-# rather than merely that something downloaded.
-$manifest = Get-Content (Join-Path $work "$Asset.sha256.json") -Raw | ConvertFrom-Json
-$actual = (Get-FileHash (Join-Path $work $Asset) -Algorithm SHA256).Hash.ToLower()
-if ($manifest.sha256 -ne $actual) {
-  Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
-  Die "checksum mismatch: the archive is not the published one (expected $($manifest.sha256), got $actual)."
-}
-Say "  sha256  : ok"
+  $install = if ($env:UNICA_INSTALL_DIR) { $env:UNICA_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'unica-plugin' }
+  $install = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($install)
+  $parent = [IO.Directory]::GetParent($install)
+  if ($null -eq $parent) { Die 'the filesystem root cannot be an install directory.' }
+  $install = $install.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+  $parent = [IO.Directory]::GetParent($install).FullName
+  [IO.Directory]::CreateDirectory($parent) | Out-Null
+  $tx = Join-Path $parent ('.' + [IO.Path]::GetFileName($install) + '.update')
+  $stage = Join-Path $tx 'new'
+  $backup = Join-Path $tx 'previous'
+  $savedProfile = Join-Path $tx 'profile'
+  $patch = Join-Path (Join-Path (Join-Path $DshHome 'profiles') $Profile) 'cordis.patch.yml'
+  $patch = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($patch)
+  # Directory.Move claims the shared name exclusively, even with simultaneous starts.
+  $claim = Join-Path $parent ('.unica-claim-' + [guid]::NewGuid().ToString('N'))
+  [IO.Directory]::CreateDirectory($claim) | Out-Null
+  try {
+    [IO.Directory]::Move($claim, $tx)
+    $ownsTransaction = $true
+  } finally {
+    if ([IO.Directory]::Exists($claim)) { [IO.Directory]::Delete($claim) }
+  }
+  [IO.Directory]::CreateDirectory($stage) | Out-Null
+  & tar -xzf (Join-Path $work $Asset) -C $stage
+  if ($LASTEXITCODE -ne 0) { Die 'cannot unpack the archive.' }
+  if (-not (Test-UnicaPlugin $stage)) { Die 'the archive does not contain the Unica plugin.' }
 
-# -- place the plugin -------------------------------------------------------
-# The profile patch stores absolute paths, so the unpacked directory is what DSH
-# will run: it has to outlive this script. Unpacking straight into the install
-# directory and clearing it first also keeps a re-run from mixing two versions.
-$install = if ($env:UNICA_INSTALL_DIR) { $env:UNICA_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'unica-plugin' }
-if (Test-Path $install) { Remove-Item -Recurse -Force $install }
-New-Item -ItemType Directory -Force -Path $install | Out-Null
-tar -xzf (Join-Path $work $Asset) -C $install
-if (-not (Test-Path (Join-Path $install 'install.mjs'))) {
-  Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
-  Die "the archive does not contain install.mjs - it is not the plugin archive."
+  if ([IO.File]::Exists($patch)) { [IO.File]::Copy($patch, $savedProfile) }
+  if (Test-Path -LiteralPath $install) {
+    $item = Get-Item -LiteralPath $install -Force
+    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+      Die "choose an actual install directory: $install"
+    }
+    if ((Get-ChildItem -LiteralPath $install -Force | Select-Object -First 1) -and -not (Test-UnicaPlugin $install)) {
+      Die "refusing to replace a directory that is not an Unica installation: $install"
+    }
+    [IO.Directory]::Move($install, $backup)
+  }
+  $publishing = $true
+  [IO.Directory]::Move($stage, $install)
+  $arguments = @('--target', $Target, '--profile', $Profile, '--dsh-home', $DshHome)
+  if (-not $NoVerify) { $arguments += '--verify' }
+  $restorePatch = $true
+  & node (Join-Path $install 'install.mjs') @arguments
+  $code = $LASTEXITCODE
+  if ($code -eq 0) {
+    $committed = $true
+    Say "  installed to: $install"
+  }
+} finally {
+  Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+  if ($ownsTransaction) {
+    if (-not $committed) {
+      try {
+        if ($publishing -and -not [IO.Directory]::Exists($stage) -and [IO.Directory]::Exists($install)) {
+          [IO.Directory]::Move($install, $stage)
+        }
+        if ([IO.Directory]::Exists($backup)) { [IO.Directory]::Move($backup, $install) }
+        if ($restorePatch) {
+          if ([IO.File]::Exists($savedProfile)) { [IO.File]::Copy($savedProfile, $patch, $true) }
+          elseif ([IO.File]::Exists($patch)) { [IO.File]::Delete($patch) }
+        }
+      } catch {
+        Die "rollback incomplete; recovery files retained at $tx. $($_.Exception.Message)"
+      }
+    }
+    Remove-Item -LiteralPath $tx -Recurse -Force
+  }
 }
-Say "  installed to: $install"
-
-# -- install ----------------------------------------------------------------
-Say ''
-$arguments = @('--target', $Target, '--profile', $Profile, '--dsh-home', $DshHome)
-if (-not $NoVerify) { $arguments += '--verify' }
-& node (Join-Path $install 'install.mjs') @arguments
-$code = $LASTEXITCODE
-Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 
 # No unconditional `exit` here. The documented entry point is `irm ... | iex`, and
 # there `exit` ends the whole PowerShell session instead of returning to a prompt:

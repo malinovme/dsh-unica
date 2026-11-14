@@ -98,7 +98,9 @@ fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/unica-install.XXXXXX")"
 cleanup() { rm -rf "$WORK"; }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # `UNICA_BASE_URL` names a mirror (or the local directory the tests serve); a
 # release tag has no meaning there, so the base is used verbatim.
@@ -119,36 +121,88 @@ process.stdout.write(createHash("sha256").update(readFileSync(process.argv[1])).
 [ "$EXPECTED" = "$ACTUAL" ] || die "checksum mismatch: the archive is not the published one (expected $EXPECTED, got $ACTUAL)."
 say "  sha256  : ok"
 
-# ── place the plugin ────────────────────────────────────────────────────────
-# The profile patch stores absolute paths, so this directory is what DSH will
-# run and it has to outlive the script. Unpacking straight into it, after
-# clearing it, also keeps a re-run from mixing two versions.
-#
-# Nothing here needs an execute bit: the port ships no binaries, and the one file
-# DSH starts — bootstrap/launch.mjs — is invoked through `node`. It fetches the
-# runtime itself on first use.
-INSTALL="${UNICA_INSTALL_DIR:-$HOME/.local/share/unica-plugin}"
-rm -rf "$INSTALL"
-mkdir -p "$INSTALL"
-tar -xzf "$WORK/$ASSET" -C "$INSTALL" || die "cannot unpack the archive."
-[ -f "$INSTALL/install.mjs" ] || die "the archive does not contain install.mjs — it is not the plugin archive."
-# Older releases were packaged on Windows with CRLF in the POSIX launcher.
-# 0.13 dropped that launcher in favour of `bootstrap/launch.mjs`, which `node`
-# starts without a shebang, so current archives do not contain the file at all.
-# Normalizing is therefore conditional: an archive with the file must be
-# repaired, and an archive without it is the normal case, not a failure.
-if [ -f "$INSTALL/bootstrap/launch.sh" ]; then
+# Keep staging and backup on the destination filesystem so that each move is
+# a rename. The fixed transaction directory also excludes competing updaters.
+INSTALL="$(node -p 'require("node:path").resolve(process.argv[1])' -- "${UNICA_INSTALL_DIR:-$HOME/.local/share/unica-plugin}")"
+PARENT="$(dirname "$INSTALL")"
+[ "$INSTALL" != "$PARENT" ] || die "the filesystem root cannot be an install directory."
+mkdir -p "$PARENT"
+TX="$PARENT/.$(basename "$INSTALL").update"
+(umask 077 && mkdir "$TX") || die "update directory already exists or cannot be created: $TX (check for an unfinished update)."
+STAGE="$TX/new"
+BACKUP="$TX/previous"
+PATCH="$DSH_HOME/profiles/$PROFILE/cordis.patch.yml"
+RESTORE_PATCH=0
+PUBLISHING=0
+COMMITTED=0
+
+rollback() {
+  # If the second rename failed, the candidate is still under new/.
+  if [ "$PUBLISHING" = 1 ] && [ ! -d "$STAGE" ] && [ -d "$INSTALL" ]; then
+    mv "$INSTALL" "$STAGE" || return 1
+  fi
+  if [ -d "$BACKUP" ]; then mv "$BACKUP" "$INSTALL" || return 1; fi
+  if [ "$RESTORE_PATCH" = 1 ]; then
+    if [ -f "$TX/profile" ]; then
+      cp -p "$TX/profile" "$PATCH" || return 1
+    elif [ -e "$PATCH" ]; then
+      rm -f "$PATCH" || return 1
+    fi
+  fi
+}
+
+finish() {
+  status=$?
+  trap - EXIT
+  trap '' HUP INT TERM
+  if [ "$COMMITTED" = 1 ] || rollback; then
+    rm -rf "$TX"
+  else
+    echo "unica installer: rollback incomplete; recovery files retained at $TX" >&2
+    status=1
+  fi
+  cleanup
+  exit "$status"
+}
+trap finish EXIT
+trap 'exit 129' HUP
+
+mkdir "$STAGE"
+tar -xzf "$WORK/$ASSET" -C "$STAGE" || die "cannot unpack the archive."
+is_plugin() {
+  [ -f "$1/install.mjs" ] && [ -f "$1/package.json" ] && node -e '
+    const fs = require("node:fs")
+    const pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+    process.exitCode = pkg.name === "dsh-plugin-unica" ? 0 : 1
+  ' "$1/package.json"
+}
+is_plugin "$STAGE" || die "the archive does not contain the Unica plugin."
+# Repair the CRLF launcher shipped with older releases before publishing them.
+if [ -f "$STAGE/bootstrap/launch.sh" ]; then
   node -e '
 const fs = require("node:fs")
 const file = process.argv[1]
-const text = fs.readFileSync(file, "utf8")
-fs.writeFileSync(file, text.replace(/\r\n/g, "\n"))
-' "$INSTALL/bootstrap/launch.sh" || die "cannot normalize the POSIX launcher."
+fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n"))
+' "$STAGE/bootstrap/launch.sh" || die "cannot normalize the POSIX launcher."
 fi
-say "  installed to: $INSTALL"
 
-# ── install ─────────────────────────────────────────────────────────────────
-say ""
+if [ -f "$PATCH" ]; then cp -p "$PATCH" "$TX/profile"; fi
+if [ -L "$INSTALL" ]; then die "choose the actual install directory instead of a symbolic link: $INSTALL"; fi
+if [ -e "$INSTALL" ]; then
+  [ -d "$INSTALL" ] || die "not an install directory: $INSTALL"
+  contents="$(ls -A "$INSTALL")"
+  if [ -n "$contents" ]; then
+    is_plugin "$INSTALL" || die "refusing to replace a directory that is not an Unica installation: $INSTALL"
+  fi
+  mv "$INSTALL" "$BACKUP"
+fi
+
+# install.mjs writes absolute paths, so run it from its final location.
+PUBLISHING=1
+mv "$STAGE" "$INSTALL"
 set -- --target "$TARGET" --profile "$PROFILE" --dsh-home "$DSH_HOME"
 [ "$VERIFY" = "1" ] && set -- "$@" --verify
+RESTORE_PATCH=1
 node "$INSTALL/install.mjs" "$@"
+COMMITTED=1
+say "  installed to: $INSTALL"
