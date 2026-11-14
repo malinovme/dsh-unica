@@ -40,6 +40,81 @@ case "$(uname -s)" in
   *) die "this script handles macOS and Linux; on Windows use install.ps1" ;;
 esac
 
+# ── which profile ───────────────────────────────────────────────────────────
+# DSH Desktop serves its sessions from a profile of its own, and patching `web`
+# instead would look successful and change nothing for that app.
+if [ -n "${UNICA_PROFILE:-}" ]; then
+  PROFILE="$UNICA_PROFILE"
+elif [ -d "$DSH_HOME/profiles/desktop" ]; then
+  PROFILE="desktop"
+else
+  PROFILE="web"
+fi
+
+say "unica for DeepSeek Harness — installer"
+say "  profile : $PROFILE"
+say "  dsh home: $DSH_HOME"
+
+# Keep staging and backup on the destination filesystem so that each move is
+# a rename. The fixed transaction directory also excludes competing updaters.
+INSTALL="$(node -p 'require("node:path").resolve(process.argv[1])' -- "${UNICA_INSTALL_DIR:-$HOME/.local/share/unica-plugin}")"
+PARENT="$(dirname "$INSTALL")"
+[ "$INSTALL" != "$PARENT" ] || die "the filesystem root cannot be an install directory."
+mkdir -p "$PARENT"
+TX="$PARENT/.$(basename "$INSTALL").update"
+# Keep a kernel lock separate from the journal. Closing the last inherited
+# descriptor (including an install.mjs orphan) releases it after a hard stop.
+# Never unlink the lock file: contenders must all lock the same inode.
+LOCK="$TX.lock"
+exec 9>>"$LOCK"
+if command -v flock >/dev/null 2>&1; then
+  flock -n 9 || die "another updater holds $LOCK"
+elif command -v perl >/dev/null 2>&1; then
+  perl -MFcntl=:flock -e 'open my $lock, ">&=9" or die $!; flock($lock, LOCK_EX | LOCK_NB) or exit 1' || die "another updater holds $LOCK"
+else
+  die "flock or Perl is required to lock an update"
+fi
+STAGE="$TX/new"
+BACKUP="$TX/previous"
+PATCH="$DSH_HOME/profiles/$PROFILE/cordis.patch.yml"
+PATCH="$(node -p 'require("node:path").resolve(process.argv[1])' -- "$PATCH")"
+# Atomically detach a completed transaction before deleting its journal.
+retire_tx() {
+  retired="$(mktemp -d "$PARENT/.unica-finished.XXXXXX")" || return 1
+  mv "$TX" "$retired/transaction" || return 1
+  rm -rf "$retired"
+}
+
+rollback() {
+  # The snapshot and original profile path are complete before 'prepared'.
+  [ -f "$TX/prepared" ] || return 0
+  if [ ! -d "$STAGE" ] && [ -d "$INSTALL" ]; then
+    mv "$INSTALL" "$STAGE" || return 1
+  fi
+  if [ -d "$BACKUP" ]; then
+    [ ! -e "$INSTALL" ] || return 1
+    mv "$BACKUP" "$INSTALL" || return 1
+  fi
+  if [ -f "$TX/profile" ]; then
+    cp -p "$TX/profile" "$PATCH" || return 1
+  elif [ -e "$PATCH" ]; then
+    rm -f "$PATCH" || return 1
+  fi
+}
+
+if [ -e "$TX" ]; then
+  [ -d "$TX" ] && [ ! -L "$TX" ] && [ -f "$TX/journal-v1" ] ||
+    die "unrecognized or active update at $TX; see README: recovery"
+  if [ ! -f "$TX/committed" ]; then
+    requested_patch=$PATCH
+    PATCH="$(cat "$TX/journal-v1")"
+    case "$PATCH" in /*/cordis.patch.yml) ;; *) die "invalid profile path in $TX";; esac
+    rollback || die "rollback incomplete; recovery files retained at $TX"
+    PATCH=$requested_patch
+  fi
+  retire_tx || die "could not retire transaction at $TX"
+  say "  recovered interrupted update"
+fi
 # ── which release ───────────────────────────────────────────────────────────
 # A local mirror answers by URL, so it rules out `gh release download` and the
 # latest-release lookup: the version is only a label then.
@@ -69,22 +144,7 @@ fetch(url, { headers: { accept: "application/vnd.github+json" } })
 fi
 [ -n "${VERSION:-}" ] || die "cannot determine the latest release of $REPO. Pass UNICA_VERSION=<tag> to pin a release."
 
-# ── which profile ───────────────────────────────────────────────────────────
-# DSH Desktop serves its sessions from a profile of its own, and patching `web`
-# instead would look successful and change nothing for that app.
-if [ -n "${UNICA_PROFILE:-}" ]; then
-  PROFILE="$UNICA_PROFILE"
-elif [ -d "$DSH_HOME/profiles/desktop" ]; then
-  PROFILE="desktop"
-else
-  PROFILE="web"
-fi
-
-say "unica for DeepSeek Harness — installer"
 say "  version : $VERSION"
-say "  profile : $PROFILE"
-say "  dsh home: $DSH_HOME"
-
 # ── download ────────────────────────────────────────────────────────────────
 if [ "$USE_GH" = "1" ]; then
   fetch() { gh release download "$VERSION" --repo "$REPO" --pattern "${1##*/}" --dir "$WORK"; }
@@ -121,42 +181,17 @@ process.stdout.write(createHash("sha256").update(readFileSync(process.argv[1])).
 [ "$EXPECTED" = "$ACTUAL" ] || die "checksum mismatch: the archive is not the published one (expected $EXPECTED, got $ACTUAL)."
 say "  sha256  : ok"
 
-# Keep staging and backup on the destination filesystem so that each move is
-# a rename. The fixed transaction directory also excludes competing updaters.
-INSTALL="$(node -p 'require("node:path").resolve(process.argv[1])' -- "${UNICA_INSTALL_DIR:-$HOME/.local/share/unica-plugin}")"
-PARENT="$(dirname "$INSTALL")"
-[ "$INSTALL" != "$PARENT" ] || die "the filesystem root cannot be an install directory."
-mkdir -p "$PARENT"
-TX="$PARENT/.$(basename "$INSTALL").update"
-(umask 077 && mkdir "$TX") || die "update directory already exists or cannot be created: $TX (check for an unfinished update)."
-STAGE="$TX/new"
-BACKUP="$TX/previous"
-PATCH="$DSH_HOME/profiles/$PROFILE/cordis.patch.yml"
-RESTORE_PATCH=0
-PUBLISHING=0
-COMMITTED=0
-
-rollback() {
-  # If the second rename failed, the candidate is still under new/.
-  if [ "$PUBLISHING" = 1 ] && [ ! -d "$STAGE" ] && [ -d "$INSTALL" ]; then
-    mv "$INSTALL" "$STAGE" || return 1
-  fi
-  if [ -d "$BACKUP" ]; then mv "$BACKUP" "$INSTALL" || return 1; fi
-  if [ "$RESTORE_PATCH" = 1 ]; then
-    if [ -f "$TX/profile" ]; then
-      cp -p "$TX/profile" "$PATCH" || return 1
-    elif [ -e "$PATCH" ]; then
-      rm -f "$PATCH" || return 1
-    fi
-  fi
-}
+# mkdir also excludes older installers that do not participate in the OS lock.
+(umask 077 && mkdir "$TX") || die "cannot claim transaction at $TX"
+printf '%s' "$PATCH" > "$TX/journal.tmp"
+mv "$TX/journal.tmp" "$TX/journal-v1"
 
 finish() {
   status=$?
   trap - EXIT
   trap '' HUP INT TERM
-  if [ "$COMMITTED" = 1 ] || rollback; then
-    rm -rf "$TX"
+  if [ -f "$TX/committed" ] || rollback; then
+    retire_tx || status=1
   else
     echo "unica installer: rollback incomplete; recovery files retained at $TX" >&2
     status=1
@@ -194,15 +229,14 @@ if [ -e "$INSTALL" ]; then
   if [ -n "$contents" ]; then
     is_plugin "$INSTALL" || die "refusing to replace a directory that is not an Unica installation: $INSTALL"
   fi
-  mv "$INSTALL" "$BACKUP"
 fi
+: > "$TX/prepared"
+if [ -d "$INSTALL" ]; then mv "$INSTALL" "$BACKUP"; fi
 
 # install.mjs writes absolute paths, so run it from its final location.
-PUBLISHING=1
 mv "$STAGE" "$INSTALL"
 set -- --target "$TARGET" --profile "$PROFILE" --dsh-home "$DSH_HOME"
 [ "$VERIFY" = "1" ] && set -- "$@" --verify
-RESTORE_PATCH=1
 node "$INSTALL/install.mjs" "$@"
-COMMITTED=1
+: > "$TX/committed"
 say "  installed to: $INSTALL"

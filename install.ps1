@@ -58,27 +58,6 @@ if (-not (Get-Command tar -ErrorAction SilentlyContinue)) {
   Die 'tar is required to unpack the archive; Windows 10 1803 and newer ship it.'
 }
 
-# -- which release ----------------------------------------------------------
-# Asked for rather than hard-coded: a version written into this script goes
-# stale silently, and the failure would surface as a download error on a tag
-# that used to exist. A pinned -Version skips the lookup.
-if (-not $Version) {
-  if (Get-Command gh -ErrorAction SilentlyContinue) {
-    $Version = (& gh release view --repo $Repo --json tagName -q .tagName 2>$null | Select-Object -First 1)
-  }
-  if (-not $Version) {
-    # TLS 1.2 is not the default on every Windows PowerShell, and the lookup
-    # then fails with an error that says nothing about TLS.
-    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    try {
-      $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ accept = 'application/vnd.github+json' } -UseBasicParsing
-      $Version = $release.tag_name
-    } catch {
-      Die "cannot determine the latest release of $Repo. Pass -Version <tag> to pin a release."
-    }
-  }
-}
-
 # -- where things are -------------------------------------------------------
 if (-not $DshHome) { $DshHome = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $env:USERPROFILE '.dsh' } }
 # DSH Desktop serves its sessions from a profile of its own, and patching `web`
@@ -88,16 +67,12 @@ if (-not $Profile) {
 }
 
 Say 'unica for DeepSeek Harness - installer'
-Say "  version : $Version"
 Say "  profile : $Profile"
 Say "  dsh home: $DshHome"
 
 # -- download ---------------------------------------------------------------
 $work = Join-Path ([IO.Path]::GetTempPath()) ("unica-install-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force -Path $work | Out-Null
-$base = if ($BaseUrl) { $BaseUrl.TrimEnd('/') } else { "https://github.com/$Repo/releases/download/$Version" }
-Say "  archive : $base/$Asset"
-
 # TLS 1.2 is not the default on every Windows PowerShell in the wild, and the
 # download then fails with an unhelpful error.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -109,10 +84,86 @@ function Test-UnicaPlugin([string]$Directory) {
 
 $code = 1
 $ownsTransaction = $false
-$committed = $false
-$publishing = $false
-$restorePatch = $false
+$updateLock = $null
+function Restore-Transaction([string]$ProfilePath) {
+  if (-not [IO.File]::Exists((Join-Path $tx 'prepared'))) { return }
+  if (-not [IO.Directory]::Exists($stage) -and [IO.Directory]::Exists($install)) {
+    [IO.Directory]::Move($install, $stage)
+  }
+  if ([IO.Directory]::Exists($backup)) { [IO.Directory]::Move($backup, $install) }
+  if ([IO.File]::Exists($savedProfile)) { [IO.File]::Copy($savedProfile, $ProfilePath, $true) }
+  elseif ([IO.File]::Exists($ProfilePath)) { [IO.File]::Delete($ProfilePath) }
+}
+function Remove-FinishedTransaction {
+  $retired = Join-Path $parent ('.unica-finished-' + [guid]::NewGuid().ToString('N'))
+  [IO.Directory]::Move($tx, $retired)
+  Remove-Item -LiteralPath $retired -Recurse -Force
+}
 try {
+  $install = if ($env:UNICA_INSTALL_DIR) { $env:UNICA_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'unica-plugin' }
+  $install = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($install)
+  $parent = [IO.Directory]::GetParent($install)
+  if ($null -eq $parent) { Die 'the filesystem root cannot be an install directory.' }
+  $install = $install.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+  $parent = [IO.Directory]::GetParent($install).FullName
+  [IO.Directory]::CreateDirectory($parent) | Out-Null
+  $tx = Join-Path $parent ('.' + [IO.Path]::GetFileName($install) + '.update')
+  $stage = Join-Path $tx 'new'
+  $backup = Join-Path $tx 'previous'
+  $savedProfile = Join-Path $tx 'profile'
+  $patch = Join-Path (Join-Path (Join-Path $DshHome 'profiles') $Profile) 'cordis.patch.yml'
+  $patch = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($patch)
+  # Hold an OS lock for recovery as well as installation. Leave the lock file
+  # in place; the handle is released by Windows even on forced termination.
+  try {
+    $updateLock = [IO.File]::Open("$tx.lock", 'OpenOrCreate', 'ReadWrite', 'None')
+  } catch [IO.IOException] { Die "another updater holds $tx.lock, or the lock file is inaccessible" }
+  $journal = Join-Path $tx 'journal-v1'
+  if ([IO.Directory]::Exists($tx)) {
+    if (((Get-Item -LiteralPath $tx -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        -not [IO.File]::Exists($journal)) { Die "unrecognized or active update at $tx; see README: recovery" }
+    if (-not [IO.File]::Exists((Join-Path $tx 'committed'))) {
+      $oldPatch = [IO.File]::ReadAllText($journal)
+      if (-not [IO.Path]::IsPathRooted($oldPatch) -or [IO.Path]::GetFileName($oldPatch) -ne 'cordis.patch.yml') {
+        Die "invalid profile path in $tx"
+      }
+      # A killed PowerShell host can leave install.mjs running. Revoke its
+      # unique ticket first, then check whether it already registered its PID.
+      Get-ChildItem -LiteralPath $tx -Filter '*.ticket' | Remove-Item -Force
+      foreach ($pidFile in (Get-ChildItem -LiteralPath $tx -Filter '*.pid')) {
+        $childId = [int][IO.File]::ReadAllText($pidFile.FullName)
+        if (Get-Process -Id $childId -ErrorAction SilentlyContinue) { Die "installer child $childId is still active" }
+      }
+      Restore-Transaction $oldPatch
+    }
+    Remove-FinishedTransaction
+    Say '  recovered interrupted update'
+  }
+  # -- which release ----------------------------------------------------------
+  # Asked for rather than hard-coded: a version written into this script goes
+  # stale silently, and the failure would surface as a download error on a tag
+  # that used to exist. A pinned -Version skips the lookup.
+  if (-not $Version) {
+    if (Get-Command gh -ErrorAction SilentlyContinue) {
+      $Version = (& gh release view --repo $Repo --json tagName -q .tagName 2>$null | Select-Object -First 1)
+    }
+    if (-not $Version) {
+      # TLS 1.2 is not the default on every Windows PowerShell, and the lookup
+      # then fails with an error that says nothing about TLS.
+      [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+      try {
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ accept = 'application/vnd.github+json' } -UseBasicParsing
+        $Version = $release.tag_name
+      } catch {
+        Die "cannot determine the latest release of $Repo. Pass -Version <tag> to pin a release."
+      }
+    }
+  }
+
+  Say "  version : $Version"
+  $base = if ($BaseUrl) { $BaseUrl.TrimEnd('/') } else { "https://github.com/$Repo/releases/download/$Version" }
+  Say "  archive : $base/$Asset"
+
   Invoke-WebRequest -Uri "$base/$Asset" -OutFile (Join-Path $work $Asset) -UseBasicParsing
   Invoke-WebRequest -Uri "$base/$Asset.sha256.json" -OutFile (Join-Path $work "$Asset.sha256.json") -UseBasicParsing
   $manifest = Get-Content -LiteralPath (Join-Path $work "$Asset.sha256.json") -Raw | ConvertFrom-Json
@@ -130,27 +181,15 @@ try {
   if ($manifest.sha256 -ne $actual) { Die "checksum mismatch: expected $($manifest.sha256), got $actual." }
   Say "  sha256  : ok"
 
-  $install = if ($env:UNICA_INSTALL_DIR) { $env:UNICA_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'unica-plugin' }
-  $install = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($install)
-  $parent = [IO.Directory]::GetParent($install)
-  if ($null -eq $parent) { Die 'the filesystem root cannot be an install directory.' }
-  $install = $install.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
-  $parent = [IO.Directory]::GetParent($install).FullName
-  [IO.Directory]::CreateDirectory($parent) | Out-Null
-  $tx = Join-Path $parent ('.' + [IO.Path]::GetFileName($install) + '.update')
-  $stage = Join-Path $tx 'new'
-  $backup = Join-Path $tx 'previous'
-  $savedProfile = Join-Path $tx 'profile'
-  $patch = Join-Path (Join-Path (Join-Path $DshHome 'profiles') $Profile) 'cordis.patch.yml'
-  $patch = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($patch)
   # Directory.Move claims the shared name exclusively, even with simultaneous starts.
   $claim = Join-Path $parent ('.unica-claim-' + [guid]::NewGuid().ToString('N'))
   [IO.Directory]::CreateDirectory($claim) | Out-Null
   try {
+    [IO.File]::WriteAllText((Join-Path $claim 'journal-v1'), $patch)
     [IO.Directory]::Move($claim, $tx)
     $ownsTransaction = $true
   } finally {
-    if ([IO.Directory]::Exists($claim)) { [IO.Directory]::Delete($claim) }
+    if ([IO.Directory]::Exists($claim)) { [IO.Directory]::Delete($claim, $true) }
   }
   [IO.Directory]::CreateDirectory($stage) | Out-Null
   & tar -xzf (Join-Path $work $Asset) -C $stage
@@ -166,37 +205,42 @@ try {
     if ((Get-ChildItem -LiteralPath $install -Force | Select-Object -First 1) -and -not (Test-UnicaPlugin $install)) {
       Die "refusing to replace a directory that is not an Unica installation: $install"
     }
-    [IO.Directory]::Move($install, $backup)
   }
-  $publishing = $true
+  [IO.File]::WriteAllText((Join-Path $tx 'prepared'), '')
+  if ([IO.Directory]::Exists($install)) { [IO.Directory]::Move($install, $backup) }
   [IO.Directory]::Move($stage, $install)
   $arguments = @('--target', $Target, '--profile', $Profile, '--dsh-home', $DshHome)
   if (-not $NoVerify) { $arguments += '--verify' }
-  $restorePatch = $true
-  & node (Join-Path $install 'install.mjs') @arguments
+  $ticket = Join-Path $tx ([guid]::NewGuid().ToString('N') + '.ticket')
+  [IO.File]::WriteAllText($ticket, '')
+  # This preload runs only in the installer process. Writing the unique PID
+  # before checking admission makes recovery safe on both sides of spawn.
+  $guard = "$ticket.cjs"
+  [IO.File]::WriteAllText($guard, @'
+const fs = require('node:fs')
+const ticket = __filename.slice(0, -4)
+fs.writeFileSync(ticket + '.pid.tmp', String(process.pid))
+fs.renameSync(ticket + '.pid.tmp', ticket + '.pid')
+if (!fs.existsSync(ticket)) process.exit(1)
+'@)
+  & node --require $guard (Join-Path $install 'install.mjs') @arguments
   $code = $LASTEXITCODE
   if ($code -eq 0) {
-    $committed = $true
+    [IO.File]::WriteAllText((Join-Path $tx 'committed'), '')
     Say "  installed to: $install"
   }
 } finally {
-  Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
-  if ($ownsTransaction) {
-    if (-not $committed) {
-      try {
-        if ($publishing -and -not [IO.Directory]::Exists($stage) -and [IO.Directory]::Exists($install)) {
-          [IO.Directory]::Move($install, $stage)
-        }
-        if ([IO.Directory]::Exists($backup)) { [IO.Directory]::Move($backup, $install) }
-        if ($restorePatch) {
-          if ([IO.File]::Exists($savedProfile)) { [IO.File]::Copy($savedProfile, $patch, $true) }
-          elseif ([IO.File]::Exists($patch)) { [IO.File]::Delete($patch) }
-        }
-      } catch {
-        Die "rollback incomplete; recovery files retained at $tx. $($_.Exception.Message)"
+  try {
+    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+    if ($ownsTransaction) {
+      if (-not [IO.File]::Exists((Join-Path $tx 'committed'))) {
+        try { Restore-Transaction $patch }
+        catch { Die "rollback incomplete; recovery files retained at ${tx}: $($_.Exception.Message)" }
       }
+      Remove-FinishedTransaction
     }
-    Remove-Item -LiteralPath $tx -Recurse -Force
+  } finally {
+    if ($null -ne $updateLock) { $updateLock.Dispose() }
   }
 }
 

@@ -26,8 +26,8 @@
 import { createHash } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
-import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { chmod, link, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { existsSync, statSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { homedir } from 'node:os'
@@ -98,6 +98,48 @@ function artifactAt(name) {
   if (descriptor === undefined) die(`artifact ${name} has no entry for ${wanted}`)
   const dir = join(cacheRoot, name, `${artifact.version}--${descriptor.asset.sha256}`, wanted)
   return { artifact, descriptor, dir, marker: join(dir, '.ready.json') }
+}
+
+// Presence checks are cheap on a warm start. Hashes are checked during delivery.
+function ready(entry) {
+  return existsSync(entry.marker) && [entry.descriptor.entrypoint, ...(entry.descriptor.files ?? []).map(f => f.path)]
+    .filter(Boolean).every(path => statSync(join(entry.dir, path), { throwIfNoEntry: false })?.isFile())
+}
+
+// Repair in place. A hard link publishes a complete verified file atomically
+// and fails if another launcher got there first. Never unlink a live payload.
+async function repairArtifact(scratch, entry) {
+  const last = new Set([entry.descriptor.entrypoint, '.ready.json'].filter(Boolean).map(path => join(path)))
+  async function publish(path) {
+    const src = join(scratch, path)
+    const dst = join(entry.dir, path)
+    try {
+      await link(src, dst)
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error
+      if (!(await lstat(dst)).isFile()) throw new Error(`expected a cached file at ${dst}`)
+      // Old ready markers can have different formatting. All payload files
+      // encountered during repair must agree with the verified download.
+      if (path !== '.ready.json' && await hashFile(src) !== await hashFile(dst)) {
+        throw new Error(`existing cache file differs from the verified download: ${dst}`)
+      }
+    }
+  }
+  async function visit(relative) {
+    const directory = join(entry.dir, relative)
+    if (!(await lstat(directory)).isDirectory()) throw new Error(`expected a cache directory at ${directory}`)
+    for (const file of await readdir(join(scratch, relative), { withFileTypes: true })) {
+      const path = join(relative, file.name)
+      if (file.isDirectory()) {
+        await mkdir(join(entry.dir, path), { recursive: true })
+        await visit(path)
+      } else if (!last.has(path)) {
+        await publish(path)
+      }
+    }
+  }
+  await visit('')
+  for (const path of last) await publish(path)
 }
 
 /** Streams a URL to a file, returning its SHA-256. */
@@ -181,7 +223,7 @@ function unpack(archivePath, dir, assetName) {
  */
 async function installArtifact(name) {
   const entry = artifactAt(name)
-  if (existsSync(entry.marker)) return entry
+  if (ready(entry)) return entry
 
   const assetPath = join(cacheRoot, `.${name}-${process.pid}-${entry.descriptor.asset.name}`)
   const scratch = join(cacheRoot, `.${name}-${process.pid}`)
@@ -248,8 +290,14 @@ async function installArtifact(name) {
   try {
     await rename(scratch, entry.dir)
   } catch (error) {
-    await rm(scratch, { recursive: true, force: true })
-    if (!existsSync(entry.marker)) throw error
+    try {
+      if (!ready(entry)) {
+        if (!['EEXIST', 'ENOTEMPTY', 'EPERM', 'EACCES'].includes(error.code) || !existsSync(entry.dir)) throw error
+        await repairArtifact(scratch, entry)
+      }
+    } finally {
+      await rm(scratch, { recursive: true, force: true })
+    }
   }
   return entry
 }
@@ -258,7 +306,7 @@ async function installArtifact(name) {
 function missingEngines() {
   const order = ['v8-runner', 'bsl-analyzer', 'rlm-tools-bsl']
   return Object.keys(artifacts)
-    .filter((name) => name !== 'unica' && !existsSync(artifactAt(name).marker))
+    .filter((name) => name !== 'unica' && !ready(artifactAt(name)))
     .sort((left, right) => order.indexOf(left) - order.indexOf(right))
 }
 

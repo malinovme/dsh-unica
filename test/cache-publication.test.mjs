@@ -8,7 +8,12 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { resolveConfig } from '../dsh-unica-plugin/host/lib/config.js'
 import { UnicaProc } from '../dsh-unica-plugin/host/lib/proc.js'
 
-test('two cold launchers initialize without replacing the first published runtime', { timeout: 240_000 }, async () => {
+for (const incomplete of [false, true]) {
+  const initial = incomplete ? 'a ready marker without its executable' : 'an empty cache'
+  test('two launchers initialize against ' + initial, { timeout: 240_000 }, () => checkPublication(incomplete))
+}
+
+async function checkPublication(incomplete) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'unica-publish-')))
   const cache = join(root, 'cache')
   const target = process.platform === 'win32' ? 'win-x64' : `${process.platform}-${process.arch}`
@@ -36,6 +41,13 @@ test('two cold launchers initialize without replacing the first published runtim
   }
 
   try {
+    if (incomplete) {
+      await mkdir(directory, { recursive: true })
+      await writeFile(join(directory, '.ready.json'), JSON.stringify({
+        artifact: 'unica', version: unica.version, target, assetSha256: unica.targets[target].asset.sha256,
+      }))
+      await writeFile(join(directory, 'keep'), 'original')
+    }
     const first = await workspace('first')
     const second = await workspace('second')
     const preload = new URL('./fixtures/hold-cache-publication.mjs', import.meta.url)
@@ -68,7 +80,7 @@ test('two cold launchers initialize without replacing the first published runtim
     } finally {
       controller.abort()
     }
-    assert.ok(!existsSync(directory))
+    assert.equal(existsSync(directory), incomplete)
     await writeFile(join(first.cwd, 'continue-publication'), '')
     await firstStart
     const witness = join(directory, 'first-publisher.txt')
@@ -82,10 +94,11 @@ test('two cold launchers initialize without replacing the first published runtim
       assert.equal(view.structuredContent.data.workspaceRoot, worker.cwd)
     }
     assert.equal(await readFile(witness, 'utf8'), 'original', 'first published runtime was replaced')
+    if (incomplete) assert.equal(await readFile(join(directory, 'keep'), 'utf8'), 'original')
     assert.deepEqual(await readdir(cache), ['unica'])
   } finally {
     for (const worker of workers) worker.close('test finished', { tree: true })
     await Promise.allSettled(launches)
     await rm(root, { recursive: true, force: true, maxRetries: 8 })
   }
-})
+}

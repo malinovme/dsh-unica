@@ -36,7 +36,7 @@
 // preset left there is invisible to 0.2.0, which is exactly the failure this
 // installer previously produced.
 import { readdir } from 'node:fs/promises'
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -160,19 +160,12 @@ const COLD_TIMEOUT_MS = 1_800_000
 /** The tool surface Unica 0.13 introduced and 0.15 keeps: eleven tools, not 74 domain actions. */
 const EXPECTED_TOOLS = 11
 
-/**
- * The runtime's readiness marker, in the artifact layout the launcher installs:
- * `<cache>/<artifact>/<version>--<asset sha256>/<target>/.ready.json`.
- *
- * Its presence is what separates the two cases that need different budgets: a
- * cached runtime answers in seconds, while a cold one spends minutes on the
- * download and would look broken under the handshake's timeout. The launcher
- * writes this marker after it has verified and renamed the artifact into place.
- */
-function readyMarker(runtimes) {
-  const core = RUNTIME_MANIFEST.artifacts?.unica?.targets?.[LAUNCH.target]
-  if (core === undefined) return join(runtimes, RUNTIME_MANIFEST.pluginVersion, LAUNCH.target, '.ready.json')
-  return join(runtimes, 'unica', `${RUNTIME_MANIFEST.artifacts.unica.version}--${core.asset.sha256}`, LAUNCH.target, '.ready.json')
+/** An incomplete cache needs the download budget even if the marker survived. */
+function coreReady(runtimes) {
+  const core = RUNTIME_MANIFEST.artifacts.unica.targets[LAUNCH.target]
+  const dir = join(runtimes, 'unica', `${RUNTIME_MANIFEST.artifacts.unica.version}--${core.asset.sha256}`, LAUNCH.target)
+  return existsSync(join(dir, '.ready.json')) && [core.entrypoint, ...core.files.map(f => f.path)]
+    .every(path => statSync(join(dir, path), { throwIfNoEntry: false })?.isFile())
 }
 
 /**
@@ -188,7 +181,7 @@ function readyMarker(runtimes) {
  * @returns `{ ok, tools, server, root, stderr, ms }`
  */
 function nativeSelftest(cache) {
-  const budget = existsSync(readyMarker(cache.runtimes)) ? SMOKE_TIMEOUT_MS : COLD_TIMEOUT_MS
+  const budget = coreReady(cache.runtimes) ? SMOKE_TIMEOUT_MS : COLD_TIMEOUT_MS
   if (budget === COLD_TIMEOUT_MS) {
     console.log(`  runtime       : not cached yet — downloading and verifying it first, this can take minutes`)
   }
