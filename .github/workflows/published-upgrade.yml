@@ -18,6 +18,11 @@ on:
         type: string
         required: true
 
+      checkout_installer:
+        description: Test the checked-out installer for the target release
+        type: boolean
+        default: false
+
 permissions:
   contents: read
 
@@ -42,6 +47,7 @@ jobs:
         run: npm install --no-save --no-package-lock --prefix "$RUNNER_TEMP/dsh-harness" @deepseek-ai/dsh@0.2.2-rc.1
       - name: Check upgrade and rollback using published assets
         env:
+          CHECKOUT_INSTALLER: ${{ inputs.checkout_installer && '1' || '0' }}
           FROM_TAG: ${{ inputs.from_tag || 'v0.15.0.5' }}
           TO_TAG: ${{ inputs.to_tag || 'v0.15.0.6' }}
           DSH_INSTALL_ROOT: ${{ runner.temp }}/dsh-harness

@@ -68,6 +68,7 @@ for (const wrapper of ['sh', 'ps1']) {
       'killed-updater', 'committed-update', 'edited-during-update', 'interrupted-publication',
       'legacy-profile-conflict', wrapper === 'ps1' ? 'reused-pid' : 'claim-collision',
     ]
+    if (wrapper === 'ps1' && process.platform === 'win32') scenarios.push('busy-previous-at-commit')
     for (const scenario of scenarios) {
       await t.test(scenario, async () => {
         const dir = join(root, scenario)
@@ -100,6 +101,35 @@ for (const wrapper of ['sh', 'ps1']) {
           '-Profile', 'web', '-DshHome', home, '-NoVerify',
         ]
         const retry = extra => run(command, args, { env: { ...env, ...extra }, timeout: 30_000 })
+        if (scenario === 'busy-previous-at-commit') {
+          const hold = join(dir, 'installer-ready')
+          const ready = join(dir, 'backup-open')
+          const update = retry({ FIXTURE_HOLD: hold })
+          // Hold a real Windows handle without delete sharing until cleanup
+          // has started, as can happen when another process reads the backup.
+          const reader = run(powershell, ['-NoProfile', '-Command', `
+            $ErrorActionPreference = 'Stop'
+            while (-not [IO.File]::Exists($env:INSTALLER_READY)) { Start-Sleep -Milliseconds 25 }
+            $file = [IO.File]::OpenRead((Join-Path $env:TRANSACTION 'previous/old.txt'))
+            try {
+              [IO.File]::WriteAllText($env:BACKUP_OPEN, '')
+              [IO.File]::WriteAllText("$env:INSTALLER_READY.finish", '')
+              while (-not [IO.File]::Exists((Join-Path $env:TRANSACTION 'committed'))) { Start-Sleep -Milliseconds 25 }
+              Start-Sleep -Milliseconds 900
+            } finally { $file.Dispose() }
+          `], { env: { ...env, INSTALLER_READY: hold, BACKUP_OPEN: ready, TRANSACTION: transaction }, timeout: 20_000 })
+          try {
+            await Promise.all([reader, update])
+          } finally {
+            reader.child.kill()
+            update.child.kill()
+          }
+          assert.equal(await readFile(ready, 'utf8'), '')
+          assert.equal(await readFile(profile, 'utf8'), install)
+          assert.equal(await readFile(join(install, 'install.mjs'), 'utf8'), entrypoint)
+          assert.deepEqual((await readdir(dir)).filter(name => name === basename(transaction) || name.startsWith('.unica-finished-')), [])
+          return
+        }
         if (scenario === 'claim-collision') {
           // A legacy updater can claim even an empty directory while we download.
           const claim = () => { mkdirSync(transaction); server.off('request', claim) }
