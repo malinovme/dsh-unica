@@ -1,0 +1,5 @@
+{
+  "op": "make",
+  "args": {"extension": "tutorial", "output": "build/out/Учебное.cfe"},
+  "dryRun": true
+}

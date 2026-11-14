@@ -12,6 +12,22 @@ permissions:
   contents: read
 
 jobs:
+  price-extension:
+    name: Price calculator tutorial (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Verify BSL search and form editing without the 1C platform
+        run: node examples/verify-price-extension.mjs
+
   minimum-dsh:
     name: Native bridge on minimum DSH 0.2.2-rc.1
     runs-on: ubuntu-latest

@@ -1,0 +1,11 @@
+{
+  "at": "tutorial:DataProcessor.Учебное_РасчетЦены.Form.Форма",
+  "ops": [{
+    "op": "item.add",
+    "args": {"items": [{
+      "name": "ПодсказкаРасчета",
+      "type": "LabelDecoration",
+      "title": "Сумма = цена × количество, округление до 2 знаков"
+    }]}
+  }]
+}

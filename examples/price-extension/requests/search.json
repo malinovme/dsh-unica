@@ -1,0 +1,5 @@
+{
+  "scope": "tutorial:DataProcessor.Учебное_РасчетЦены",
+  "corpus": "text",
+  "query": "РассчитатьСумму"
+}
