@@ -1,7 +1,7 @@
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { loadCatalog } from './lib/catalog.js'
+import { loadCatalog, retryCatalog } from './lib/catalog.js'
 import { resolveConfig } from './lib/config.js'
 import { publicToolName } from './lib/naming.js'
 import { ProcPool, canonicalCwd } from './lib/pool.js'
@@ -96,23 +96,34 @@ export async function apply(ctx, rawConfig) {
   const config = resolveConfig(rawConfig, { pluginRoot: DEFAULT_PLUGIN_ROOT })
   const log = makeLogger(ctx)
   const pool = new ProcPool(config, log)
-  ctx.effect(() => () => pool.closeAll())
+  const activation = new AbortController()
+  const { signal } = activation
+  const disposers = []
+  ctx.effect(() => () => {
+    activation.abort()
+    pool.closeAll()
+    for (const dispose of disposers.splice(0)) dispose()
+  })
+
+  function register(tools) {
+    if (signal.aborted) return
+    for (const tool of tools) {
+      const publicName = publicToolName(config.serverName, tool.name)
+      disposers.push(ctx.tools.register(createToolDefinition({ tool, publicName, ctx, config, pool, log })))
+    }
+    log.info(`unica-native: registered ${disposers.length} tools (probe cwd ${config.probeCwd ?? tmpdir()})`)
+  }
 
   let tools
   try {
-    tools = await loadCatalog(config, log)
+    tools = await loadCatalog(config, log, signal)
   } catch (error) {
-    log.error(`unica-native: tool catalog unavailable, no tools registered: ${error?.message ?? String(error)}`)
+    if (!signal.aborted) {
+      void retryCatalog(config, log, signal, error).then(register).catch((failure) => {
+        if (!signal.aborted) log.error(`unica-native: tool catalog activation failed: ${failure.message}`)
+      })
+    }
     return
   }
-
-  const disposers = []
-  for (const tool of tools) {
-    const publicName = publicToolName(config.serverName, tool.name)
-    disposers.push(ctx.tools.register(createToolDefinition({ tool, publicName, ctx, config, pool, log })))
-  }
-  ctx.effect(() => () => {
-    for (const dispose of disposers.splice(0)) dispose()
-  })
-  log.info(`unica-native: registered ${disposers.length} tools (probe cwd ${config.probeCwd ?? tmpdir()})`)
+  register(tools)
 }

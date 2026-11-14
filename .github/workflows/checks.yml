@@ -75,6 +75,8 @@ jobs:
 
       - name: Native MCP process and workspace pool integration
         run: node --test test/native-bridge.test.mjs
+      - name: Recover catalog registration and cancel probes on unload
+        run: node --test test/catalog.test.mjs
 
       # The launcher is fetched as part of the archive and compared against the
       # published checksum, so its line endings must not depend on who built the
@@ -472,6 +474,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
+      - name: Recover catalog registration and cancel probes on unload
+        run: node --test test/catalog.test.mjs
       - name: Release upgrade and rollback in Windows PowerShell
         run: node --test test/update.test.mjs
       - name: Close initializing and ready native workers on Windows
