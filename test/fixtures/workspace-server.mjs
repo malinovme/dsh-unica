@@ -15,6 +15,7 @@ if (process.env.FIXTURE_REFUSED_CACHE) {
 for await (const line of createInterface({ input: process.stdin })) {
   const { id, method, params } = JSON.parse(line)
   if (method === 'initialize' && existsSync('hold-initialize')) {
+    writeFileSync('launcher-pid', String(process.ppid))
     writeFileSync('initialize-started', String(process.pid))
     while (existsSync('hold-initialize')) await delay(10)
   }

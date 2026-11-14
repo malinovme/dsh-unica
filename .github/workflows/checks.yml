@@ -426,3 +426,5 @@ jobs:
           node-version: '24'
       - name: Release upgrade and rollback in Windows PowerShell
         run: node --test test/update.test.mjs
+      - name: Close initializing and ready native workers on Windows
+        run: node --test --test-name-pattern=closeAll test/native-bridge.test.mjs
