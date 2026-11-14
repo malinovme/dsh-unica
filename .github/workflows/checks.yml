@@ -43,6 +43,8 @@ jobs:
           node-version: '24'
       - name: Verify BSL search and form editing without the 1C platform
         run: node examples/verify-price-extension.mjs
+      - name: Verify the upstream tool schema comparison
+        run: node --test test/tool-schemas.test.mjs
 
   minimum-dsh:
     name: Native bridge on minimum DSH 0.2.2-rc.1
