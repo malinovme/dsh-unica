@@ -116,7 +116,17 @@ try {
   Invoke-WebRequest -Uri "$base/$Asset" -OutFile (Join-Path $work $Asset) -UseBasicParsing
   Invoke-WebRequest -Uri "$base/$Asset.sha256.json" -OutFile (Join-Path $work "$Asset.sha256.json") -UseBasicParsing
   $manifest = Get-Content -LiteralPath (Join-Path $work "$Asset.sha256.json") -Raw | ConvertFrom-Json
-  $actual = (Get-FileHash -LiteralPath (Join-Path $work $Asset) -Algorithm SHA256).Hash.ToLower()
+  $sha256 = [Security.Cryptography.SHA256]::Create()
+  try {
+    $stream = [IO.File]::OpenRead((Join-Path $work $Asset))
+    try {
+      $actual = [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+      $stream.Dispose()
+    }
+  } finally {
+    $sha256.Dispose()
+  }
   if ($manifest.sha256 -ne $actual) { Die "checksum mismatch: expected $($manifest.sha256), got $actual." }
   Say "  sha256  : ok"
 

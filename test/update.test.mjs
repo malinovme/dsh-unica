@@ -43,17 +43,19 @@ for (const wrapper of ['sh', 'ps1']) {
     await writeFile(join(source, 'install.mjs'), entrypoint)
     const release = await archive('release')
     let payload = release
+    let invalidChecksum = false
     const server = createServer((req, res) => {
       if (req.url === '/' + asset) return res.end(payload)
       if (req.url === '/' + asset + '.sha256.json') {
-        return res.end(JSON.stringify({ sha256: createHash('sha256').update(payload).digest('hex') }))
+        const sha256 = invalidChecksum ? '0'.repeat(64) : createHash('sha256').update(payload).digest('hex')
+        return res.end(JSON.stringify({ sha256 }))
       }
       res.writeHead(404).end()
     })
     await new Promise((ok, fail) => server.once('error', fail).listen(0, '127.0.0.1', ok))
     t.after(() => new Promise((ok) => server.close(ok)))
     const url = 'http://127.0.0.1:' + server.address().port
-    for (const scenario of ['corrupt', 'missing-installer', 'failed-upgrade', 'failed-first-install', 'success', 'unrelated-directory', 'update-in-progress']) {
+    for (const scenario of ['checksum-mismatch', 'corrupt', 'missing-installer', 'failed-upgrade', 'failed-first-install', 'success', 'unrelated-directory', 'update-in-progress']) {
       await t.test(scenario, async () => {
         const dir = join(root, scenario)
         const install = join(dir, 'plugin with spaces')
@@ -75,6 +77,7 @@ for (const wrapper of ['sh', 'ps1']) {
           }
         }
         payload = scenario === 'corrupt' ? Buffer.from('damaged archive') : scenario === 'missing-installer' ? incomplete : release
+        invalidChecksum = scenario === 'checksum-mismatch'
         const env = { ...process.env, UNICA_BASE_URL: url, UNICA_INSTALL_DIR: install, UNICA_DSH_HOME: home,
           UNICA_PROFILE: 'web', UNICA_VERIFY: '0', FIXTURE_FAIL: scenario.startsWith('failed') ? '1' : '0' }
         const command = wrapper === 'sh' ? 'sh' : powershell
@@ -89,7 +92,8 @@ for (const wrapper of ['sh', 'ps1']) {
           assert.equal(await readFile(join(install, 'install.mjs'), 'utf8'), entrypoint)
           await assert.rejects(readFile(join(install, 'old.txt')), { code: 'ENOENT' })
         } else {
-          await assert.rejects(update, scenario.startsWith('failed') ? { code: 37 } : undefined)
+          if (invalidChecksum) await assert.rejects(update, /checksum mismatch/i)
+          else await assert.rejects(update, scenario.startsWith('failed') ? { code: 37 } : undefined)
           if (scenario === 'failed-first-install') {
             await assert.rejects(readdir(install), { code: 'ENOENT' })
             await assert.rejects(readFile(profile), { code: 'ENOENT' })
