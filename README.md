@@ -18,8 +18,8 @@ stdio MCP-сервер с 11 инструментами для метаданн�
 
 ## Версия и артефакты
 
-Опубликованный [релиз v0.15.0.8](https://github.com/malinovme/dsh-unica/releases/tag/v0.15.0.8)
-содержит восьмую ревизию порта на Unica 0.15.0-rc.5. Первой с
+Опубликованный [релиз v0.15.0.9](https://github.com/malinovme/dsh-unica/releases/tag/v0.15.0.9)
+содержит девятую ревизию порта на Unica 0.15.0-rc.5. Первой с
 **нативным мостом вместо MCP-строки** была `0.15.0.3`: рабочий каталог берётся из
 сессии (см. [Совместимость с DSH](#совместимость-с-dsh)). В `0.15.0.4` установщик
 на Windows возвращает приглашение после `irm ... | iex` и не оставляет за собой
@@ -31,11 +31,12 @@ MCP-сервер и отклоняет ожидающие вызовы до вы
 При прерванном обновлении установщик восстанавливает плагин и сохраняет правки пользователя в профиле.
 В `0.15.0.8` установщик Windows повторяет удаление резервной копии, если другой процесс
 временно держит её файл открытым. После освобождения файла установщик очищает журнал и завершает обновление.
+В `0.15.0.9` параллельный вызов из другого проекта сохраняет занятый процесс, а мост повторяет загрузку инструментов после временного сбоя Unica. Установщик поддерживает `DSH_HOME` через символическую ссылку на Linux и macOS и восстанавливает прерванную очистку на Windows.
 
 | | |
 |---|---|
 | Unica | **0.15.0-rc.5** |
-| Ревизия порта | 8 |
+| Ревизия порта | 9 |
 | Инструментов | **11** |
 | Навыков | **50** |
 | Файлов справочников | **46** |
@@ -113,7 +114,7 @@ irm https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.ps1 | iex
 `-Version`):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | UNICA_VERSION=v0.15.0.8 sh
+curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | UNICA_VERSION=v0.15.0.9 sh
 ```
 
 Скрипт сам выбирает профиль (`desktop`, если он есть, иначе `web`), а если
@@ -422,7 +423,7 @@ npm в `DSH_INSTALL_ROOT` и выполните `node ci/minimum-dsh.mjs` из �
 Вариант для GitHub CLI:
 
 ```sh
-gh workflow run published-upgrade.yml --ref main -f from_tag=v0.15.0.7 -f to_tag=v0.15.0.8
+gh workflow run published-upgrade.yml --ref main -f from_tag=v0.15.0.8 -f to_tag=v0.15.0.9
 ```
 
 Ubuntu и Windows скачивают архивы с GitHub Releases, сверяют SHA-256 и
