@@ -1,0 +1,48 @@
+name: Published release upgrade
+run-name: Verify upgrade ${{ inputs.from_tag || 'v0.15.0.5' }} to ${{ inputs.to_tag || 'v0.15.0.6' }}
+
+on:
+  # Exercise changes to this workflow on both runners before they reach main.
+  pull_request:
+    paths:
+      - '.github/workflows/published-upgrade.yml'
+      - 'ci/published-upgrade.py'
+  workflow_dispatch:
+    inputs:
+      from_tag:
+        description: Installed release tag (e.g. v0.15.0.5)
+        type: string
+        required: true
+      to_tag:
+        description: Newer published release tag (e.g. v0.15.0.6)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  upgrade:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Install DSH for Web profile composition
+        shell: bash
+        run: npm install --no-save --no-package-lock --prefix "$RUNNER_TEMP/dsh-harness" @deepseek-ai/dsh@0.2.2-rc.1
+      - name: Check upgrade and rollback using published assets
+        env:
+          FROM_TAG: ${{ inputs.from_tag || 'v0.15.0.5' }}
+          TO_TAG: ${{ inputs.to_tag || 'v0.15.0.6' }}
+          DSH_INSTALL_ROOT: ${{ runner.temp }}/dsh-harness
+        run: python ci/published-upgrade.py
