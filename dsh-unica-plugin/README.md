@@ -6,7 +6,7 @@
 Мост берёт рабочий каталог из каждой сессии DSH и держит пул процессов unica по
 каталогам — один профиль обслуживает любое число проектов.
 
-- **Unica 0.15.0-rc.5**, ревизия порта 5
+- **Unica 0.15.0-rc.5**, ревизия порта 6
 - **11 инструментов** (в 0.12 их было 74)
 - **50 навыков**, **46 файлов справочников**
 - Платформы: **Windows x64**, **Linux x64**, **macOS arm64**
@@ -30,7 +30,7 @@ irm https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.ps1 | iex
 `-Version` скрипту):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | UNICA_VERSION=v0.15.0.5 sh
+curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | UNICA_VERSION=v0.15.0.6 sh
 ```
 
 Скрипт сам выбирает профиль (`desktop`, если он есть, иначе `web`) и после

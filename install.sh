@@ -2,7 +2,7 @@
 # Installs the DSH port of unica on macOS and Linux.
 #
 #   curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | UNICA_VERSION=v0.15.0.5 sh
+#   curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | UNICA_VERSION=v0.15.0.6 sh
 #
 # This is a downloader, not the installer: it fetches the release archive, checks
 # it against the published SHA-256, unpacks it and hands over to `install.mjs`,
@@ -10,7 +10,7 @@
 # implementation of the install logic, written once in Node.
 #
 # Environment overrides:
-#   UNICA_VERSION=v0.15.0.5    release tag to install (default: the latest)
+#   UNICA_VERSION=v0.15.0.6    release tag to install (default: the latest)
 #   UNICA_PROFILE=web           DSH profile to patch (default: desktop if the
 #                               Desktop app has one, otherwise web)
 #   UNICA_DSH_HOME=~/.dsh       DSH home; normally taken from the environment
