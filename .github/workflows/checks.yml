@@ -12,6 +12,22 @@ permissions:
   contents: read
 
 jobs:
+  minimum-dsh:
+    name: Native bridge on minimum DSH 0.2.2-rc.1
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Install minimum supported DSH
+        run: npm install --no-save --no-package-lock --prefix "$RUNNER_TEMP/dsh-minimum" @deepseek-ai/dsh@0.2.2-rc.1
+      - name: Invoke the registered bridge tool through DSH
+        env:
+          DSH_INSTALL_ROOT: ${{ runner.temp }}/dsh-minimum
+        run: node ci/minimum-dsh.mjs
+
   # The checks that need no upstream payload: they read only what is committed.
   integrity:
     runs-on: ubuntu-latest
