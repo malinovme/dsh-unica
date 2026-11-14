@@ -1,0 +1,9 @@
+workPath: build
+format: DESIGNER
+source-set:
+  - name: main
+    type: CONFIGURATION
+    path: src
+  - name: tutorial
+    type: EXTENSION
+    path: ext
