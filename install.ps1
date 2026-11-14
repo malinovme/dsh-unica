@@ -16,7 +16,7 @@
 # 'CmdletBinding'" before a single line executes.
 #
 # Parameters:
-#   -Version v0.15.0.4   release tag to install (default: the latest)
+#   -Version v0.15.0.5   release tag to install (default: the latest)
 #   -Profile web         DSH profile to patch (default: desktop if the Desktop
 #                        app has one, otherwise web)
 #   -DshHome C:\...\.dsh DSH home; normally taken from the environment
