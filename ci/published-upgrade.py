@@ -92,7 +92,11 @@ def verify(old, new, root):
         return output
 
     def install(tag, fault=None):
-        wrapper.write_bytes(tagged_file(tag, wrapper.name))
+        if tag == new and os.environ.get("CHECKOUT_INSTALLER") == "1":
+            wrapper.write_bytes((REPO / wrapper.name).read_bytes())
+            print(f"Using checked-out {wrapper.name} with published {tag}", flush=True)
+        else:
+            wrapper.write_bytes(tagged_file(tag, wrapper.name))
         args = (["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper),
                  "-Version", tag, "-Profile", "web", "-Target", "preset", "-DshHome", str(home)]
                 if windows else ["sh", str(wrapper)])

@@ -164,6 +164,13 @@ function Remove-FinishedTransaction {
     $dir = Get-DraftDirectory ([IO.File]::ReadAllText((Join-Path $tx 'journal-v2')))
     if ([IO.Directory]::Exists($dir)) { [IO.Directory]::Delete($dir, $true) }
   }
+  # Once committed, the previous plugin is disposable. Windows can refuse to
+  # rename a directory containing an open descendant. Drain the backup first,
+  # keeping the committed marker in place if deletion is interrupted.
+  if ([IO.File]::Exists((Join-Path $tx 'committed')) -and [IO.Directory]::Exists($backup)) {
+    & node -e "require('node:fs').rmSync(process.argv[1], {recursive: true, force: true, maxRetries: 8, retryDelay: 150})" -- $backup
+    if ($LASTEXITCODE -ne 0) { Die "could not remove previous plugin at $backup" }
+  }
   $retired = Join-Path $parent ('.unica-finished-' + [guid]::NewGuid().ToString('N'))
   [IO.Directory]::Move($tx, $retired)
   Remove-Item -LiteralPath $retired -Recurse -Force
