@@ -49,6 +49,19 @@ test('native bridge uses the session directory despite an inherited workspace pi
   assert.equal(JSON.parse(report).root, cwd)
 })
 
+test('launcher reports the signal that terminated its runtime', { skip: process.platform === 'win32' }, async () => {
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    for (const relay of ['0', '1']) {
+      const child = spawn(process.execPath, [launcher, plugin], {
+        env: { ...process.env, UNICA_BRIDGE_TEXT_FALLBACK: relay,
+          UNICA_LAUNCH_SELFTEST_COMMAND: JSON.stringify([process.execPath, '-e', `process.kill(process.pid, '${signal}')`]) },
+        timeout: 5000, killSignal: 'SIGKILL',
+      })
+      assert.deepEqual(await once(child, 'close'), [null, signal])
+    }
+  }
+})
+
 test('a background engine HTTP failure leaves the cached core serving', async (t) => {
   const dir = tempDir(t)
   const cache = join(dir, 'cache')

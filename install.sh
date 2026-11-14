@@ -40,6 +40,125 @@ case "$(uname -s)" in
   *) die "this script handles macOS and Linux; on Windows use install.ps1" ;;
 esac
 
+# ── which profile ───────────────────────────────────────────────────────────
+# DSH Desktop serves its sessions from a profile of its own, and patching `web`
+# instead would look successful and change nothing for that app.
+if [ -n "${UNICA_PROFILE:-}" ]; then
+  PROFILE="$UNICA_PROFILE"
+elif [ -d "$DSH_HOME/profiles/desktop" ]; then
+  PROFILE="desktop"
+else
+  PROFILE="web"
+fi
+
+say "unica for DeepSeek Harness — installer"
+say "  profile : $PROFILE"
+say "  dsh home: $DSH_HOME"
+
+# Keep staging and backup on the destination filesystem so that each move is
+# a rename. The fixed transaction directory also excludes competing updaters.
+INSTALL="$(node -p 'require("node:path").resolve(process.argv[1])' -- "${UNICA_INSTALL_DIR:-$HOME/.local/share/unica-plugin}")"
+PARENT="$(dirname "$INSTALL")"
+[ "$INSTALL" != "$PARENT" ] || die "the filesystem root cannot be an install directory."
+mkdir -p "$PARENT"
+TX="$PARENT/.$(basename "$INSTALL").update"
+# Keep a kernel lock separate from the journal. Closing the last inherited
+# descriptor (including an install.mjs orphan) releases it after a hard stop.
+# Never unlink the lock file: contenders must all lock the same inode.
+LOCK="$TX.lock"
+exec 9>>"$LOCK"
+if command -v flock >/dev/null 2>&1; then
+  flock -n 9 || die "another updater holds $LOCK"
+elif command -v perl >/dev/null 2>&1; then
+  perl -MFcntl=:flock -e 'open my $lock, ">&=9" or die $!; flock($lock, LOCK_EX | LOCK_NB) or exit 1' || die "another updater holds $LOCK"
+else
+  die "flock or Perl is required to lock an update"
+fi
+STAGE="$TX/new"
+BACKUP="$TX/previous"
+PATCH="$DSH_HOME/profiles/$PROFILE/cordis.patch.yml"
+PATCH="$(node -p 'require("node:path").resolve(process.argv[1])' -- "$PATCH")"
+# Atomically detach a completed transaction before deleting its journal.
+retire_tx() {
+  if [ -L "$TX" ]; then
+    claim="$(readlink "$TX")" || return 1
+    rm "$TX" || return 1
+    rm -rf "$PARENT/$claim"
+    return
+  fi
+  retired="$(mktemp -d "$PARENT/.unica-finished.XXXXXX")" || return 1
+  mv "$TX" "$retired/transaction" || return 1
+  rm -rf "$retired"
+}
+
+rollback() {
+  # The snapshot and original profile path are complete before 'prepared'.
+  [ -f "$TX/prepared" ] || return 0
+  if [ ! -f "$TX/journal-v2" ] && [ ! -d "$STAGE" ] && [ -f "$TX/profile" ]; then
+    # v1 recorded no fingerprint of installed settings. Preserve both versions
+    # if the live bytes differ; recovery can be repeated after another crash.
+    if ! cmp -s "$TX/profile" "$PATCH"; then
+      saved="$(mktemp -d "$PARENT/.unica-profile-backup.XXXXXXXX")" || return 1
+      cp -p "$TX/profile" "$saved/cordis.patch.yml" || return 1
+      say "  keeping current profile; previous profile saved to $saved/cordis.patch.yml"
+    fi
+  fi
+  if [ ! -d "$STAGE" ] && [ -d "$INSTALL" ]; then
+    mv "$INSTALL" "$STAGE" || return 1
+  fi
+  if [ -d "$BACKUP" ]; then
+    [ ! -e "$INSTALL" ] || return 1
+    mv "$BACKUP" "$INSTALL" || return 1
+  fi
+}
+
+publish_profile() {
+  draft="$TX/draft/cordis.patch.yml"
+  node -e '
+    const fs = require("node:fs"), path = require("node:path")
+    let [source, target, baseline] = process.argv.slice(1)
+    while (fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink())
+      target = path.resolve(path.dirname(target), fs.readlinkSync(target))
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    // The symlink target may live on a different filesystem.
+    const tmp = path.join(path.dirname(target), ".unica-" + require("node:crypto").randomUUID())
+    try {
+      fs.copyFileSync(source, tmp, fs.constants.COPYFILE_EXCL)
+      const read = p => fs.existsSync(p) ? fs.readFileSync(p) : null
+      const original = read(baseline), live = read(target)
+      if (live === null ? original === null : original !== null && live.equals(original)) {
+        fs.renameSync(tmp, target)
+      } else {
+        console.error("keeping changed profile: " + target)
+      }
+    } finally { fs.rmSync(tmp, { force: true }) }
+  ' -- "$draft" "$PATCH" "$TX/profile" || return 1
+}
+
+if [ -e "$TX" ] || [ -L "$TX" ]; then
+  if [ -L "$TX" ]; then
+    claim="$(readlink "$TX")"
+    case "$claim" in */*|.unica-claim.) die "invalid claim at $TX";; .unica-claim.*) ;; *) die "invalid claim at $TX";; esac
+    [ ! -L "$PARENT/$claim" ] && [ -f "$TX/journal-v2" ] || die "invalid claim at $TX"
+  fi
+  journal="$TX/journal-v2"
+  [ -f "$journal" ] || journal="$TX/journal-v1"
+  [ -d "$TX" ] && [ -f "$journal" ] ||
+    die "unrecognized or active update at $TX; see README: recovery"
+  if [ ! -f "$TX/committed" ]; then
+    requested_patch=$PATCH
+    PATCH="$(cat "$journal")"
+    case "$PATCH" in /*/cordis.patch.yml) ;; *) die "invalid profile path in $TX";; esac
+    if [ -f "$TX/publishing-profile" ]; then
+      publish_profile || die "could not finish profile publication at $TX"
+    else
+      rollback || die "rollback incomplete; recovery files retained at $TX"
+    fi
+    PATCH=$requested_patch
+  fi
+  retire_tx || die "could not retire transaction at $TX"
+  say "  recovered interrupted update"
+fi
 # ── which release ───────────────────────────────────────────────────────────
 # A local mirror answers by URL, so it rules out `gh release download` and the
 # latest-release lookup: the version is only a label then.
@@ -69,22 +188,7 @@ fetch(url, { headers: { accept: "application/vnd.github+json" } })
 fi
 [ -n "${VERSION:-}" ] || die "cannot determine the latest release of $REPO. Pass UNICA_VERSION=<tag> to pin a release."
 
-# ── which profile ───────────────────────────────────────────────────────────
-# DSH Desktop serves its sessions from a profile of its own, and patching `web`
-# instead would look successful and change nothing for that app.
-if [ -n "${UNICA_PROFILE:-}" ]; then
-  PROFILE="$UNICA_PROFILE"
-elif [ -d "$DSH_HOME/profiles/desktop" ]; then
-  PROFILE="desktop"
-else
-  PROFILE="web"
-fi
-
-say "unica for DeepSeek Harness — installer"
 say "  version : $VERSION"
-say "  profile : $PROFILE"
-say "  dsh home: $DSH_HOME"
-
 # ── download ────────────────────────────────────────────────────────────────
 if [ "$USE_GH" = "1" ]; then
   fetch() { gh release download "$VERSION" --repo "$REPO" --pattern "${1##*/}" --dir "$WORK"; }
@@ -121,42 +225,23 @@ process.stdout.write(createHash("sha256").update(readFileSync(process.argv[1])).
 [ "$EXPECTED" = "$ACTUAL" ] || die "checksum mismatch: the archive is not the published one (expected $EXPECTED, got $ACTUAL)."
 say "  sha256  : ok"
 
-# Keep staging and backup on the destination filesystem so that each move is
-# a rename. The fixed transaction directory also excludes competing updaters.
-INSTALL="$(node -p 'require("node:path").resolve(process.argv[1])' -- "${UNICA_INSTALL_DIR:-$HOME/.local/share/unica-plugin}")"
-PARENT="$(dirname "$INSTALL")"
-[ "$INSTALL" != "$PARENT" ] || die "the filesystem root cannot be an install directory."
-mkdir -p "$PARENT"
-TX="$PARENT/.$(basename "$INSTALL").update"
-(umask 077 && mkdir "$TX") || die "update directory already exists or cannot be created: $TX (check for an unfinished update)."
-STAGE="$TX/new"
-BACKUP="$TX/previous"
-PATCH="$DSH_HOME/profiles/$PROFILE/cordis.patch.yml"
-RESTORE_PATCH=0
-PUBLISHING=0
-COMMITTED=0
-
-rollback() {
-  # If the second rename failed, the candidate is still under new/.
-  if [ "$PUBLISHING" = 1 ] && [ ! -d "$STAGE" ] && [ -d "$INSTALL" ]; then
-    mv "$INSTALL" "$STAGE" || return 1
-  fi
-  if [ -d "$BACKUP" ]; then mv "$BACKUP" "$INSTALL" || return 1; fi
-  if [ "$RESTORE_PATCH" = 1 ]; then
-    if [ -f "$TX/profile" ]; then
-      cp -p "$TX/profile" "$PATCH" || return 1
-    elif [ -e "$PATCH" ]; then
-      rm -f "$PATCH" || return 1
-    fi
-  fi
-}
+# Publish a complete journal with an exclusive symlink. symlinkSync fails if
+# even an empty directory was claimed by an older mkdir-based installer.
+claim="$(mktemp -d "$PARENT/.unica-claim.XXXXXXXX")"
+printf '%s' "$PATCH" > "$claim/journal-v2"
+if ! node -e 'require("node:fs").symlinkSync(process.argv[1], process.argv[2])' -- "$(basename "$claim")" "$TX"; then
+  rm -rf "$claim"
+  die "cannot claim transaction at $TX"
+fi
 
 finish() {
   status=$?
   trap - EXIT
   trap '' HUP INT TERM
-  if [ "$COMMITTED" = 1 ] || rollback; then
-    rm -rf "$TX"
+  if [ -f "$TX/publishing-profile" ] && [ ! -f "$TX/committed" ]; then
+    : # Keep the journal for a retry if publication failed.
+  elif [ -f "$TX/committed" ] || rollback; then
+    retire_tx || status=1
   else
     echo "unica installer: rollback incomplete; recovery files retained at $TX" >&2
     status=1
@@ -186,7 +271,16 @@ fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n"))
 ' "$STAGE/bootstrap/launch.sh" || die "cannot normalize the POSIX launcher."
 fi
 
-if [ -f "$PATCH" ]; then cp -p "$PATCH" "$TX/profile"; fi
+# Keep the actual DSH home (and runtime cache); only the profile argument is
+# redirected. The final config contains the installed plugin and cache paths.
+draft_dir="$TX/draft"
+mkdir "$draft_dir"
+draft="$draft_dir/cordis.patch.yml"
+draft_profile="$(node -p 'require("node:path").relative(process.argv[1], process.argv[2])' -- "$DSH_HOME/profiles" "$draft_dir")"
+if [ -f "$PATCH" ]; then
+  cp -p "$PATCH" "$TX/profile"
+  cp -p "$TX/profile" "$draft"
+fi
 if [ -L "$INSTALL" ]; then die "choose the actual install directory instead of a symbolic link: $INSTALL"; fi
 if [ -e "$INSTALL" ]; then
   [ -d "$INSTALL" ] || die "not an install directory: $INSTALL"
@@ -194,15 +288,24 @@ if [ -e "$INSTALL" ]; then
   if [ -n "$contents" ]; then
     is_plugin "$INSTALL" || die "refusing to replace a directory that is not an Unica installation: $INSTALL"
   fi
-  mv "$INSTALL" "$BACKUP"
 fi
+: > "$TX/prepared"
+if [ -d "$INSTALL" ]; then mv "$INSTALL" "$BACKUP"; fi
 
 # install.mjs writes absolute paths, so run it from its final location.
-PUBLISHING=1
 mv "$STAGE" "$INSTALL"
-set -- --target "$TARGET" --profile "$PROFILE" --dsh-home "$DSH_HOME"
+set -- --target "$TARGET" --profile "$draft_profile" --dsh-home "$DSH_HOME"
 [ "$VERIFY" = "1" ] && set -- "$@" --verify
-RESTORE_PATCH=1
 node "$INSTALL/install.mjs" "$@"
-COMMITTED=1
+if [ -f "$TX/profile" ]; then
+  cmp -s "$TX/profile" "$PATCH" || die "profile changed during update: $PATCH"
+elif [ -e "$PATCH" ]; then
+  die "profile changed during update: $PATCH"
+fi
+[ -f "$draft" ] || die "installer did not prepare a profile"
+# Record intent before the atomic rename. Recovery can finish a pending
+# publication only if the user's profile still matches the original snapshot.
+: > "$TX/publishing-profile"
+publish_profile || die "could not publish profile"
+: > "$TX/committed"
 say "  installed to: $INSTALL"
