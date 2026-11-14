@@ -1,10 +1,11 @@
 name: Published release upgrade
-run-name: Verify upgrade ${{ inputs.from_tag || 'v0.15.0.5' }} to ${{ inputs.to_tag || 'v0.15.0.6' }}
+run-name: Verify upgrade ${{ inputs.from_tag || 'v0.15.0.7' }} to ${{ inputs.to_tag || 'v0.15.0.8' }}
 
 on:
-  # Exercise changes to this workflow on both runners before they reach main.
   pull_request:
     paths:
+      - 'install.sh'
+      - 'install.ps1'
       - '.github/workflows/published-upgrade.yml'
       - 'ci/published-upgrade.py'
   workflow_dispatch:
@@ -47,8 +48,8 @@ jobs:
         run: npm install --no-save --no-package-lock --prefix "$RUNNER_TEMP/dsh-harness" @deepseek-ai/dsh@0.2.2-rc.1
       - name: Check upgrade and rollback using published assets
         env:
-          CHECKOUT_INSTALLER: ${{ inputs.checkout_installer && '1' || '0' }}
-          FROM_TAG: ${{ inputs.from_tag || 'v0.15.0.5' }}
-          TO_TAG: ${{ inputs.to_tag || 'v0.15.0.6' }}
+          CHECKOUT_INSTALLER: ${{ (github.event_name == 'pull_request' || inputs.checkout_installer) && '1' || '0' }}
+          FROM_TAG: ${{ inputs.from_tag || 'v0.15.0.7' }}
+          TO_TAG: ${{ inputs.to_tag || 'v0.15.0.8' }}
           DSH_INSTALL_ROOT: ${{ runner.temp }}/dsh-harness
         run: python ci/published-upgrade.py

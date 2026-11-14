@@ -16,18 +16,21 @@ const launcher = resolve(import.meta.dirname, '../dsh-unica-plugin/bootstrap/lau
 
 async function setup(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'unica-native-')))
-  t.after(() => rm(root, { recursive: true, force: true }))
+  const cleanups = []
   const previous = process.env.UNICA_LAUNCH_SELFTEST_COMMAND
   process.env.UNICA_LAUNCH_SELFTEST_COMMAND = JSON.stringify([process.execPath, fixture])
-  t.after(() => {
+  t.after(async () => {
+    for (const dispose of cleanups.reverse()) dispose()
     if (previous === undefined) delete process.env.UNICA_LAUNCH_SELFTEST_COMMAND
     else process.env.UNICA_LAUNCH_SELFTEST_COMMAND = previous
+    // On Windows a worker holds its working directory until the process exits.
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   })
   const config = resolveConfig({
     nodePath: process.execPath, probeCwd: root, runtimeCacheDir: join(root, 'cache'),
     providerStateDir: join(root, 'state'), startupTimeoutMs: 10_000, toolCallTimeoutMs: 3000,
   })
-  return { root, config }
+  return { root, config, cleanups }
 }
 
 async function waitFor(predicate, description, timeout = 5000) {
@@ -39,10 +42,8 @@ async function waitFor(predicate, description, timeout = 5000) {
 }
 
 // Exercise the registered tool and the real pipeline from DSH session to child stdio.
-async function registerView(t, config, sessions) {
+async function registerView(cleanups, config, sessions) {
   const tools = []
-  const cleanups = []
-  t.after(() => { for (const dispose of cleanups.reverse()) dispose() })
   await apply({
     workingDirectory: { ensure: (agent) => sessions.get(agent.session) },
     tools: { register(tool) { tools.push(tool); return () => {} } },
@@ -56,11 +57,11 @@ async function registerView(t, config, sessions) {
 }
 
 test('concurrent DSH sessions use separate workers and reuse their own workspace', async (t) => {
-  const { root, config } = await setup(t)
+  const { root, config, cleanups } = await setup(t)
   const first = join(root, 'first')
   const second = join(root, 'second')
   await Promise.all([mkdir(first), mkdir(second)])
-  const view = await registerView(t, config, new Map([['a', first], ['b', second]]))
+  const view = await registerView(cleanups, config, new Map([['a', first], ['b', second]]))
   const [a, b] = await Promise.all([view('a'), view('b')])
   assert.equal(a.workspaceRoot, first)
   assert.equal(b.workspaceRoot, second)
@@ -71,13 +72,29 @@ test('concurrent DSH sessions use separate workers and reuse their own workspace
   assert.deepEqual(againB, { ...b, calls: 2 })
 })
 
+test('a warm worker survives a concurrent call in another project at maxProcesses 1', async (t) => {
+  const { root, config, cleanups } = await setup(t)
+  const first = join(root, 'first')
+  const second = join(root, 'second')
+  await Promise.all([mkdir(first), mkdir(second)])
+  const view = await registerView(cleanups, { ...config, maxProcesses: 1 }, new Map([['a', first], ['b', second]]))
+  const warm = await view('a')
+
+  const [a, b] = await Promise.all([view('a'), view('b')])
+  assert.equal(a.workspaceRoot, first)
+  assert.equal(a.pid, warm.pid)
+  assert.equal(a.calls, 2)
+  assert.equal(b.workspaceRoot, second)
+  assert.notEqual(b.pid, a.pid)
+})
+
 test('cancelling a caller during initialize leaves the shared startup available to its peer', async (t) => {
-  const { root, config } = await setup(t)
+  const { root, config, cleanups } = await setup(t)
   const cwd = join(root, 'project')
   await mkdir(cwd)
   const gate = join(cwd, 'hold-initialize')
   await writeFile(gate, '')
-  const view = await registerView(t, config, new Map([['first', cwd], ['peer', cwd]]))
+  const view = await registerView(cleanups, config, new Map([['first', cwd], ['peer', cwd]]))
   const controller = new AbortController()
   const cancelled = assert.rejects(view('first', controller.signal), { name: 'AbortError' })
   const peer = view('peer')

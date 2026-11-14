@@ -68,7 +68,8 @@ for (const wrapper of ['sh', 'ps1']) {
       'killed-updater', 'committed-update', 'edited-during-update', 'interrupted-publication',
       'legacy-profile-conflict', wrapper === 'ps1' ? 'reused-pid' : 'claim-collision',
     ]
-    if (wrapper === 'ps1' && process.platform === 'win32') scenarios.push('busy-previous-at-commit')
+    if (wrapper === 'ps1') scenarios.push('legacy-recovery-without-draft')
+    if (wrapper === 'ps1' && process.platform === 'win32') scenarios.push('busy-previous-at-commit', 'locked-draft-during-recovery')
     for (const scenario of scenarios) {
       await t.test(scenario, async () => {
         const dir = join(root, scenario)
@@ -175,11 +176,12 @@ for (const wrapper of ['sh', 'ps1']) {
           }
           await rm(hold, { force: true })
         }
-        if (['interrupted-after-backup', 'committed-update', 'reused-pid', 'interrupted-publication', 'legacy-profile-conflict'].includes(scenario)) {
+        const publishing = ['interrupted-publication', 'legacy-recovery-without-draft', 'locked-draft-during-recovery'].includes(scenario)
+        if (publishing || ['interrupted-after-backup', 'committed-update', 'reused-pid', 'legacy-profile-conflict'].includes(scenario)) {
           // Durable on-disk states immediately after the first rename, or
           // after committing a successful update but before cleanup.
           await mkdir(transaction)
-          await writeFile(join(transaction, scenario === 'interrupted-publication' ? 'journal-v2' : 'journal-v1'), profile)
+          await writeFile(join(transaction, publishing ? 'journal-v2' : 'journal-v1'), profile)
           await writeFile(join(transaction, 'prepared'), '')
           await writeFile(join(transaction, 'profile'), oldProfile)
           await rename(install, join(transaction, 'previous'))
@@ -194,15 +196,34 @@ for (const wrapper of ['sh', 'ps1']) {
           } else if (scenario === 'legacy-profile-conflict') {
             await mkdir(install)
             await writeFile(profile, editedProfile)
-          } else if (scenario === 'interrupted-publication') {
+          } else if (publishing) {
             const draftDir = wrapper === 'ps1' ? join(dirname(profile), '.unica-profile-' + 'a'.repeat(32)) : join(transaction, 'draft')
-            await mkdir(draftDir)
-            await writeFile(join(draftDir, 'cordis.patch.yml'), 'verified settings')
+            const draft = join(draftDir, 'cordis.patch.yml')
+            if (scenario === 'legacy-recovery-without-draft') {
+              // v0.15.0.8 removed the draft before retiring the recovered journal.
+              await writeFile(profile, editedProfile)
+            } else {
+              await mkdir(draftDir)
+              await writeFile(draft, 'verified settings')
+            }
             if (wrapper === 'ps1') await writeFile(join(transaction, 'draft-name'), basename(draftDir))
             await writeFile(join(transaction, 'publishing-profile'), '')
             await mkdir(install)
             await writeFile(join(install, 'install.mjs'), entrypoint)
             await writeFile(join(install, 'package.json'), '{"name":"dsh-plugin-unica"}')
+            if (scenario === 'locked-draft-during-recovery') {
+              // Allow publication to read the draft, but interrupt cleanup before it can delete it.
+              await assert.rejects(run(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', `
+                $ErrorActionPreference = 'Stop'
+                $file = [IO.File]::OpenRead($env:DRAFT)
+                try {
+                  & $env:WRAPPER -DshHome $env:UNICA_DSH_HOME -Profile web -BaseUrl $env:UNICA_BASE_URL -Version local -NoVerify
+                } finally { $file.Dispose() }
+              `], { env: { ...env, WRAPPER: join(repo, 'install.ps1'), DRAFT: draft }, timeout: 30_000 }))
+              assert.equal(await readFile(profile, 'utf8'), 'verified settings')
+              assert.equal(await readFile(join(transaction, 'committed'), 'utf8'), '')
+              await writeFile(profile, editedProfile)
+            }
           } else {
             await mkdir(install)
             await writeFile(join(install, 'install.mjs'), entrypoint)
@@ -211,14 +232,16 @@ for (const wrapper of ['sh', 'ps1']) {
             await writeFile(join(transaction, 'committed'), '')
           }
         }
-        if (['interrupted-after-backup', 'killed-updater', 'committed-update', 'reused-pid', 'interrupted-publication', 'legacy-profile-conflict'].includes(scenario)) {
+        if (publishing || ['interrupted-after-backup', 'killed-updater', 'committed-update', 'reused-pid', 'legacy-profile-conflict'].includes(scenario)) {
           // Fail the new update before publishing anything. This exposes the
           // state restored by recovery, including the previously edited profile.
           invalidChecksum = true
           await assert.rejects(retry({}), /checksum mismatch/i)
           invalidChecksum = false
-          if (scenario === 'committed-update' || scenario === 'interrupted-publication') {
-            assert.equal(await readFile(profile, 'utf8'), scenario === 'committed-update' ? 'committed settings' : 'verified settings')
+          if (scenario === 'committed-update' || publishing) {
+            const expectedProfile = scenario === 'committed-update' ? 'committed settings' :
+              scenario === 'interrupted-publication' ? 'verified settings' : editedProfile
+            assert.equal(await readFile(profile, 'utf8'), expectedProfile)
             assert.equal(await readFile(join(install, 'install.mjs'), 'utf8'), entrypoint)
           } else {
             assert.equal(await readFile(profile, 'utf8'), editedProfile)
