@@ -128,10 +128,24 @@ function Restore-Transaction([string]$ProfilePath) {
   if ([IO.Directory]::Exists($backup)) { [IO.Directory]::Move($backup, $install) }
 }
 
+function Get-UnicaSha256([string]$Path) {
+  $sha256 = [Security.Cryptography.SHA256]::Create()
+  try {
+    $stream = [IO.File]::OpenRead($Path)
+    try {
+      return [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+      $stream.Dispose()
+    }
+  } finally {
+    $sha256.Dispose()
+  }
+}
+
 function Test-OriginalProfile([string]$ProfilePath) {
   if (-not [IO.File]::Exists($savedProfile)) { return -not [IO.File]::Exists($ProfilePath) }
   if (-not [IO.File]::Exists($ProfilePath)) { return $false }
-  return (Get-FileHash -LiteralPath $savedProfile).Hash -eq (Get-FileHash -LiteralPath $ProfilePath).Hash
+  return (Get-UnicaSha256 $savedProfile) -eq (Get-UnicaSha256 $ProfilePath)
 }
 
 function Get-DraftDirectory([string]$ProfilePath) {
@@ -233,17 +247,7 @@ try {
   Invoke-WebRequest -Uri "$base/$Asset" -OutFile (Join-Path $work $Asset) -UseBasicParsing
   Invoke-WebRequest -Uri "$base/$Asset.sha256.json" -OutFile (Join-Path $work "$Asset.sha256.json") -UseBasicParsing
   $manifest = Get-Content -LiteralPath (Join-Path $work "$Asset.sha256.json") -Raw | ConvertFrom-Json
-  $sha256 = [Security.Cryptography.SHA256]::Create()
-  try {
-    $stream = [IO.File]::OpenRead((Join-Path $work $Asset))
-    try {
-      $actual = [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
-    } finally {
-      $stream.Dispose()
-    }
-  } finally {
-    $sha256.Dispose()
-  }
+  $actual = Get-UnicaSha256 (Join-Path $work $Asset)
   if ($manifest.sha256 -ne $actual) { Die "checksum mismatch: expected $($manifest.sha256), got $actual." }
   Say "  sha256  : ok"
 
