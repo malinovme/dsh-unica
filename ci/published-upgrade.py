@@ -74,7 +74,7 @@ def verify(old, new, root):
     profile = home / "profiles/web/cordis.patch.yml"
     windows = os.name == "nt"
     wrapper = root / ("install.ps1" if windows else "install.sh")
-    wrapper.write_bytes(tagged_file(new, wrapper.name))
+    staged_profile = version(new) >= (0, 15, 0, 7)
     print(f"Checking published upgrade {old} -> {new} on {os.name}", flush=True)
     releases = {tag: release(tag, root) for tag in (old, new)}
     env = {**os.environ, "UNICA_INSTALL_DIR": str(plugin), "UNICA_DSH_HOME": str(home),
@@ -92,12 +92,14 @@ def verify(old, new, root):
         return output
 
     def install(tag, fault=None):
+        wrapper.write_bytes(tagged_file(tag, wrapper.name))
         args = (["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper),
                  "-Version", tag, "-Profile", "web", "-Target", "preset", "-DshHome", str(home)]
                 if windows else ["sh", str(wrapper)])
         extra = {"UNICA_VERSION": tag}
         if fault:
-            extra["UNICA_LAUNCH_SELFTEST_COMMAND"] = json.dumps(["node", str(fault), str(plugin), str(profile), str(witness)])
+            extra["UNICA_LAUNCH_SELFTEST_COMMAND"] = json.dumps(["node", str(fault), str(plugin), str(profile), str(witness),
+                                                                  "staged" if staged_profile else "live"])
         output = run(args, extra, expect_success=fault is None)
         assert f"/releases/download/{tag}/" in output and re.search(r"sha256\s*:\s*ok", output)
         if fault:
@@ -123,17 +125,27 @@ def verify(old, new, root):
     fault, witness = root / "intentional-failure.cjs", root / "witness.json"
     fault.write_text("""const fs = require('node:fs')
 const path = require('node:path')
-const [plugin, profile, witness] = process.argv.slice(2)
+const [plugin, profile, witness, mode] = process.argv.slice(2)
+let candidate = profile
+if (mode === 'staged') {
+  const transaction = path.join(path.dirname(plugin), '.' + path.basename(plugin) + '.update')
+  const draftDir = process.platform === 'win32'
+    ? path.join(path.dirname(profile), fs.readFileSync(path.join(transaction, 'draft-name'), 'utf8'))
+    : path.join(transaction, 'draft')
+  candidate = path.join(draftDir, 'cordis.patch.yml')
+}
 fs.writeFileSync(witness, JSON.stringify({
   version: JSON.parse(fs.readFileSync(path.join(plugin, 'package.json'))).version,
-  profile: fs.readFileSync(profile).toString('base64')
+  live: fs.readFileSync(profile).toString('base64'),
+  candidate: fs.readFileSync(candidate).toString('base64')
 }))
 console.error('published-upgrade-test: intentional failure')
 process.exit(23)
 """, encoding="utf-8")
     install(new, fault)
     probe = json.loads(witness.read_bytes())
-    candidate = base64.b64decode(probe["profile"])
+    candidate = base64.b64decode(probe["candidate"])
+    assert base64.b64decode(probe["live"]) == (baseline if staged_profile else candidate)
     assert probe["version"] == new[1:] and candidate != baseline
     assert installed_files(plugin) == releases[old][0] and profile.read_bytes() == baseline
     transaction = root / ("." + plugin.name + ".update")
