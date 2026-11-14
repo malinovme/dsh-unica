@@ -93,7 +93,7 @@ function artifactAt(name) {
 /** Streams a URL to a file, returning its SHA-256. */
 async function download(url, destination) {
   const response = await fetch(url, { redirect: 'follow' })
-  if (!response.ok || response.body === null) die(`cannot download ${url}: HTTP ${response.status}`)
+  if (!response.ok || response.body === null) throw new Error(`HTTP ${response.status}`)
   const hash = createHash('sha256')
   await pipeline(Readable.fromWeb(response.body), async function* (source) {
     for await (const chunk of source) {

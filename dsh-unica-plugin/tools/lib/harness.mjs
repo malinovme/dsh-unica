@@ -149,6 +149,14 @@ function asarNode(header, internal) {
   return node
 }
 
+function asarFileBytes(opened, bundle, internal) {
+  const entry = asarEntry(opened.header, internal)
+  if (entry === undefined) return undefined
+  if (entry.unpacked) return readFileSync(join(bundle.asar + '.unpacked', internal))
+  const offset = opened.base + Number(entry.offset)
+  return opened.fd.subarray(offset, offset + Number(entry.size))
+}
+
 /**
  * Reads one file from inside the Desktop bundle.
  *
@@ -158,12 +166,7 @@ function asarNode(header, internal) {
  */
 export function readAsarFile(internal, bundle = harnessAsar()) {
   if (bundle === undefined) return undefined
-  const opened = openAsar(bundle.asar)
-  const entry = asarEntry(opened.header, internal)
-  if (entry === undefined) return undefined
-  const offset = Number(entry.offset)
-  const size = Number(entry.size)
-  return opened.fd.subarray(opened.base + offset, opened.base + offset + size)
+  return asarFileBytes(openAsar(bundle.asar), bundle, internal)
 }
 
 /**
@@ -315,7 +318,7 @@ export function materializePackage(name, dir, bundle = harnessAsar()) {
  * @param bundle - the bundle to read from
  * @returns `{ entry, packages }` where `entry` is the path to import
  */
-export function materializeHarness(entryInternal, dir, bundle = harnessAsar()) {
+export function materializeHarness(entryInternal, dir, bundle = harnessAsar(), { profileBundles = false } = {}) {
   if (bundle === undefined) throw new Error('no Desktop bundle found to materialise')
   const opened = openAsar(bundle.asar)
   const packages = asarPackageDirs(bundle)
@@ -354,6 +357,26 @@ export function materializeHarness(entryInternal, dir, bundle = harnessAsar()) {
     }
   }
 
+  if (profileBundles) {
+    // DSH resolves bundles by package name at runtime, relative to the parent
+    // of the extracted lib directory. These data dependencies have no JS import.
+    for (const [name, internal] of packages) {
+      if (!name.startsWith('@deepseek-ai/')) continue
+      const bytes = asarFileBytes(opened, bundle, internal + '/package.json')
+      if (!bytes) continue
+      const declaration = JSON.parse(bytes).dsh?.bundle
+      if (!declaration) continue
+      const root = `node_modules/${name}`
+      files.push([`${root}/package.json`, bytes])
+      for (const path of [declaration.patch].flat()) {
+        const parts = path.replace(/^\.\//, '').split('/')
+        if (parts.some((part) => part === '..' || part === '' || part.includes('\\'))) throw new Error(`invalid bundle patch path: ${path}`)
+        const patch = asarFileBytes(opened, bundle, [internal, ...parts].join('/'))
+        if (!patch) throw new Error(`bundle patch is missing: ${internal}/${path}`)
+        files.push([join(root, ...parts), patch])
+      }
+    }
+  }
   mkdirSync(dir, { recursive: true })
   for (const [rel, bytes] of files) {
     const target = join(dir, rel)

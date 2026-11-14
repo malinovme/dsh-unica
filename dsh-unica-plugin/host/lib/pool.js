@@ -1,4 +1,5 @@
 import { realpathSync, statSync } from 'node:fs'
+import { addAbortListener } from 'node:events'
 import { resolve } from 'node:path'
 import { UnicaProc } from './proc.js'
 
@@ -33,8 +34,9 @@ export class ProcPool {
   }
 
   /** Run `fn` against the process for `cwd`, creating it on demand. */
-  async withProc(cwd, fn) {
-    const entry = await this.#acquire(cwd)
+  async withProc(cwd, fn, signal) {
+    const entry = await this.#acquire(cwd, signal)
+    signal?.throwIfAborted()
     entry.busy += 1
     entry.lastUsed = Date.now()
     try {
@@ -45,16 +47,28 @@ export class ProcPool {
     }
   }
 
-  async #acquire(cwd) {
+  async #acquire(cwd, signal) {
+    signal?.throwIfAborted()
     const existing = this.#entries.get(cwd)
     if (existing !== undefined && existing.proc.alive) return existing
 
-    const inFlight = this.#pending.get(cwd)
-    if (inFlight !== undefined) return inFlight
+    let started = this.#pending.get(cwd)
+    if (started === undefined) {
+      started = this.#start(cwd).finally(() => this.#pending.delete(cwd))
+      this.#pending.set(cwd, started)
+    }
+    if (!signal) return started
 
-    const started = this.#start(cwd).finally(() => this.#pending.delete(cwd))
-    this.#pending.set(cwd, started)
-    return started
+    // Only this caller stops waiting. Other calls may need the same handshake.
+    let listener
+    const aborted = new Promise((_, reject) => {
+      listener = addAbortListener(signal, () => reject(signal.reason))
+    })
+    try {
+      return await Promise.race([started, aborted])
+    } finally {
+      listener[Symbol.dispose]()
+    }
   }
 
   async #start(cwd) {

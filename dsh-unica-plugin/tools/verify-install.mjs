@@ -2,7 +2,7 @@
 // The end-to-end gate: composes the installed profile with DSH's own loader and
 // inspects the result.
 //
-//   node tools/verify-install.mjs <dsh-home> [profile]
+//   node tools/verify-install.mjs <dsh-home> [profile] [preset|profile]
 //
 // Why this exists. The first working version of the installer wrote its rows as
 // plain top-level patch entries. Those parse, typecheck, and satisfy every
@@ -20,7 +20,7 @@
 // `@deepseek-ai/dsh` lives in the DSH installation rather than in this
 // repository, so the harness has to be locatable: DSH_INSTALL_ROOT, a
 // `node_modules/.bin` of the harness on PATH, or the Desktop app's own bundle.
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -31,6 +31,10 @@ const argv = process.argv.slice(2)
 const positional = argv.filter((a) => !a.startsWith('--'))
 const dshHome = resolve(positional[0] ?? process.env.DSH_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.dsh'))
 const profile = positional[1] ?? 'web'
+const expectedKind = positional[2] ?? (['web', 'desktop'].includes(profile) ? 'preset' : undefined)
+if (expectedKind !== undefined && !['preset', 'profile'].includes(expectedKind)) {
+  throw new Error('expected installation kind must be preset or profile')
+}
 
 const harnessNodeModules = harnessRoots()
   .map((root) => join(root, 'node_modules'))
@@ -74,10 +78,11 @@ let materialized
 /** Copies the bundle's composition modules out of the asar, once. */
 function materialize() {
   if (materialized === undefined) {
-    const dir = join(tmpdir(), `dsh-verify-${process.pid}`)
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-verify-'))
+    process.on('exit', () => rmSync(dir, { recursive: true, force: true }))
     const candidates = dumpConfigChunks()
     if (candidates.length === 0) throw new Error('the DSH installation carries no dump-config entry point')
-    materialized = materializeHarness(`dsh/node_modules/@deepseek-ai/dsh/lib/${candidates[0]}`, dir, desktopBundle)
+    materialized = materializeHarness(`dsh/node_modules/@deepseek-ai/dsh/lib/${candidates[0]}`, dir, desktopBundle, { profileBundles: true })
     console.log(`desktop     : ${desktopBundle.asar}`)
     console.log(`extracted   : ${materialized.packages.length} packages -> ${dirname(materialized.entry)}`)
   }
@@ -121,7 +126,7 @@ async function dumpConfig(defaultOnly) {
     return true
   }
   try {
-    runDumpConfig(profile, defaultOnly, [], undefined)
+    await runDumpConfig(profile, defaultOnly, [], undefined)
   } finally {
     process.stdout.write = write
   }
@@ -138,63 +143,39 @@ const yaml = loadYaml([])
 const composed = yaml.load(await dumpConfig(false), { schema: yamlWithJsTag(yaml) })
 if (!Array.isArray(composed)) throw new Error('the harness returned a composed tree that is not a list of entries')
 
-/** Every entry of the composed tree, groups and preset compositions flattened. */
-function flatten(entries, out = []) {
-  for (const entry of entries ?? []) {
-    out.push(entry)
-    // `cordis:group` keeps its children in `config`; a preset declaration keeps
-    // its composition in `config.plugins`. Both are rows DSH will mount.
-    if (Array.isArray(entry?.config)) flatten(entry.config, out)
-    if (Array.isArray(entry?.config?.plugins)) flatten(entry.config.plugins, out)
-    if (Array.isArray(entry?.insert)) flatten(entry.insert, out)
+// A group mounts its children in the same plane. Each preset owns a separate
+// composition, so a row inside another preset cannot satisfy a missing host row.
+function groupRows(entries) {
+  const rows = []
+  for (const entry of entries) {
+    rows.push(entry)
+    if (Array.isArray(entry?.config)) rows.push(...groupRows(entry.config))
   }
-  return out
-}
-const flat = flatten(composed)
-const ids = new Set(flat.map((e) => e?.id))
-console.log(`composed    : ${composed.length} top-level entries, ${flat.length} rows in total`)
-
-const isPresetProfile = ids.has('agent-preset-registry')
-console.log(`profile kind: ${isPresetProfile ? 'preset-based (the agent plane is composed from a preset)' : 'plain (the agent plane comes from the host composition)'}`)
-
-let failed = 0
-/** The one check this tool exists for: the installer's rows are in the result. */
-function requireRow(id, why) {
-  if (ids.has(id)) {
-    console.log(`  ok      \`${id}\` is in the composed tree`)
-    return flat.find((e) => e?.id === id)
-  }
-  console.log(`  MISSING \`${id}\` — ${why}`)
-  failed += 1
-  return undefined
+  return rows
 }
 
-// A preset-based profile must carry the preset; a plain one must not (it has no
-// registry to register a declaration with, so the installer does not write one).
-if (isPresetProfile) {
-  const preset = requireRow('preset-unica-1c', 'the preset row was dropped by the patch layer (a top-level `- id:` entry cannot declare a row)')
-  if (preset !== undefined) {
-    if (preset.name !== '@deepseek-ai/dsh-agent-preset') {
-      console.log(`  BROKEN  \`preset-unica-1c\` has name ${preset.name}`)
-      failed += 1
-    }
-    console.log(`  preset  : ${preset.config?.id} / "${preset.config?.name}" / order ${preset.config?.order} / ${preset.config?.plugins?.length ?? 0} rows`)
-  }
-  // The shipped presets must still be there: a patch that replaced the roster
-  // instead of adding to it would pass a naive "is my preset present" check.
-  for (const id of ['preset-standard', 'agent-preset-registry']) {
-    if (!ids.has(id)) {
-      console.log(`  BROKEN  the shipped row \`${id}\` disappeared from the composed tree`)
-      failed += 1
-    }
-  }
+const host = groupRows(composed)
+const presetBased = expectedKind === 'preset' ||
+  (expectedKind === undefined && host.some((row) => row.id === 'agent-preset-registry'))
+console.log(`checking    : ${presetBased ? 'preset' : 'host'} rows in ${profile}`)
+function requireRow(rows, id) {
+  const row = rows.find((row) => row.id === id)
+  if (!row) throw new Error(`missing ${id} in the expected composition for ${profile}`)
+  console.log(`  ok      ${id}`)
+  return row
 }
-requireRow('unica-native', 'the native bridge row is missing from the profile')
-requireRow('skill-filesystem-unica', 'the bundled skill root is missing from the profile')
 
-if (failed > 0) {
-  console.error(`\n${failed} check(s) failed: the install is not what DSH will boot`)
-  process.exitCode = 1
-} else {
-  console.log('\nDSH composes this profile with every row the installer wrote')
+let tools = host
+if (presetBased) {
+  requireRow(host, 'agent-preset-registry')
+  requireRow(host, 'preset-standard')
+  const preset = requireRow(host, 'preset-unica-1c')
+  if (preset.name !== '@deepseek-ai/dsh-agent-preset' || preset.config?.id !== 'unica-1c' ||
+      !Array.isArray(preset.config?.plugins)) {
+    throw new Error('invalid preset-unica-1c declaration')
+  }
+  tools = groupRows(preset.config.plugins)
 }
+requireRow(tools, 'unica-native')
+requireRow(tools, 'skill-filesystem-unica')
+console.log('\nDSH composes this profile with every required row')

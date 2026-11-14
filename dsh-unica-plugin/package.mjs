@@ -66,6 +66,8 @@ files.sort((a, b) => a.rel.localeCompare(b.rel))
 // files the launcher and the Host plugin need are in it instead of assuming.
 for (const required of [
   'install.mjs',
+  'installer/profile-patch.mjs',
+  'installer/profile-file.mjs',
   'bootstrap/launch.mjs',
   'host/index.js',
   'host/selftest.js',

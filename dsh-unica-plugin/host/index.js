@@ -75,8 +75,10 @@ function createToolDefinition({ tool, publicName, ctx, config, pool, log }) {
       if (cwd === undefined) {
         throw new Error('unica-native: the session has no working directory and defaultCwd is not configured')
       }
-      const result = await pool.withProc(cwd, (proc) =>
-        proc.callTool(rawName, args, { signal: exec.signal, timeoutMs: config.toolCallTimeoutMs }),
+      const result = await pool.withProc(
+        cwd,
+        (proc) => proc.callTool(rawName, args, { signal: exec.signal, timeoutMs: config.toolCallTimeoutMs }),
+        exec.signal,
       )
       const { value, text } = normalizeResult(result)
       if (result?.isError === true) throw new Error(text.length > 0 ? text : `unica ${rawName} failed`)

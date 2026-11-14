@@ -22,6 +22,12 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Installer and native bridge regression tests
+        run: node --test test/port.test.mjs test/profile-patch.test.mjs
+
+      - name: Native MCP process and workspace pool integration
+        run: node --test test/native-bridge.test.mjs
+
       # The launcher is fetched as part of the archive and compared against the
       # published checksum, so its line endings must not depend on who built the
       # release. It used to be upstream's `launch.sh`; 0.13 replaced it with a Node
@@ -117,6 +123,11 @@ jobs:
         run: |
           npm install --no-save --no-package-lock --prefix /tmp/dsh-ci @deepseek-ai/dsh@0.2.0-rc.2 >/dev/null
           test -d /tmp/dsh-ci/node_modules/@deepseek-ai/dsh-agent-preset
+
+      - name: Verification, cancellation and profile regression tests
+        env:
+          DSH_INSTALL_ROOT: /tmp/dsh-ci
+        run: node --test test/verify.test.mjs
 
       # CI has no ambient DSH, so the shipped `standard` composition the preset
       # copies is absent. A stub template is created first and handed to every
@@ -354,6 +365,9 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Release upgrade and rollback
+        run: node --test test/update.test.mjs
+
       - name: Build and serve both archive shapes
         run: |
           mkdir -p /tmp/unica-www/new /tmp/unica-www/legacy /tmp/unica-plugin-legacy
@@ -402,3 +416,13 @@ jobs:
           fi
 
           echo "the current archive installs, and a legacy launcher is still repaired"
+
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Release upgrade and rollback in Windows PowerShell
+        run: node --test test/update.test.mjs
