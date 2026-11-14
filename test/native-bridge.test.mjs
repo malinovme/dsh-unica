@@ -127,6 +127,64 @@ test('slow initialize uses the startup budget and the pool retries a timed-out h
   }
 })
 
+async function waitForProcessExit(pid) {
+  assert.ok(Number.isInteger(pid) && pid > 0)
+  await waitFor(() => {
+    try {
+      process.kill(pid, 0)
+      return false
+    } catch (error) {
+      if (error.code === 'ESRCH') return true
+      throw error
+    }
+  }, `process ${pid} to exit`)
+}
+
+test('closeAll during initialize stops the worker and rejects every waiting call', async (t) => {
+  const { root, config } = await setup(t)
+  const gate = join(root, 'hold-initialize')
+  const marker = join(root, 'initialize-started')
+  await writeFile(gate, '')
+  const pool = new ProcPool(config)
+  const tool = t.mock.fn((proc) => proc.callTool('unica.view', {}))
+  const waiting = Promise.allSettled([pool.withProc(root, tool), pool.withProc(root, tool)])
+  try {
+    await waitFor(() => existsSync(marker), 'worker to enter initialize')
+    const serverPid = Number(await readFile(marker, 'utf8'))
+    const launcherPid = Number(await readFile(join(root, 'launcher-pid'), 'utf8'))
+    pool.closeAll()
+    pool.closeAll()
+    await Promise.all([serverPid, launcherPid].map(waitForProcessExit))
+    for (const result of await waiting) {
+      assert.equal(result.status, 'rejected')
+      assert.match(result.reason.message, /plugin unloaded/)
+    }
+    await assert.rejects(pool.withProc(root, tool), /plugin unloaded/)
+    assert.equal(tool.mock.callCount(), 0)
+  } finally {
+    await rm(gate)
+    await waiting
+    pool.closeAll()
+  }
+})
+
+test('closeAll prevents dispatch to an already acquired warm worker', async (t) => {
+  const { root, config } = await setup(t)
+  const pool = new ProcPool(config)
+  try {
+    const view = await pool.withProc(root, (proc) => proc.callTool('unica.view', {}))
+    const { pid, launcherPid } = view.structuredContent.data
+    const tool = t.mock.fn()
+    const queued = pool.withProc(root, tool)
+    pool.closeAll()
+    await assert.rejects(queued, /plugin unloaded/)
+    assert.equal(tool.mock.callCount(), 0)
+    await Promise.all([pid, launcherPid].map(waitForProcessExit))
+  } finally {
+    pool.closeAll()
+  }
+})
+
 test('a pooled workspace still answers calls after a background engine HTTP 503', {
   skip: process.platform === 'win32' && 'the cached MCP fixture uses a POSIX shebang',
 }, async (t) => {

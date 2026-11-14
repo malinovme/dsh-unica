@@ -15,6 +15,7 @@ if (process.env.FIXTURE_REFUSED_CACHE) {
 for await (const line of createInterface({ input: process.stdin })) {
   const { id, method, params } = JSON.parse(line)
   if (method === 'initialize' && existsSync('hold-initialize')) {
+    writeFileSync('launcher-pid', String(process.ppid))
     writeFileSync('initialize-started', String(process.pid))
     while (existsSync('hold-initialize')) await delay(10)
   }
@@ -31,7 +32,7 @@ for await (const line of createInterface({ input: process.stdin })) {
   const replies = {
     initialize: { serverInfo: { name: 'workspace-fixture' } },
     'tools/list': { tools: [{ name: 'unica.view' }] },
-    'tools/call': { content: [], structuredContent: { data: { workspaceRoot: process.cwd(), pid: process.pid, calls: calls.length } } },
+    'tools/call': { content: [], structuredContent: { data: { workspaceRoot: process.cwd(), pid: process.pid, launcherPid: process.ppid, calls: calls.length } } },
   }
   console.log(JSON.stringify({ jsonrpc: '2.0', id, result: replies[method] }))
 }

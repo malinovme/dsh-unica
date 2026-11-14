@@ -3,6 +3,8 @@ import { addAbortListener } from 'node:events'
 import { resolve } from 'node:path'
 import { UnicaProc } from './proc.js'
 
+const UNLOADED = 'unica-native plugin unloaded'
+
 /** Canonicalize an absolute directory; keep the resolved path when it is missing. */
 export function canonicalCwd(cwd) {
   const absolute = resolve(cwd)
@@ -25,6 +27,7 @@ export class ProcPool {
   #entries = new Map()
   #pending = new Map()
   #timer
+  #closed = false
 
   constructor(config, log) {
     this.config = config
@@ -36,6 +39,7 @@ export class ProcPool {
   /** Run `fn` against the process for `cwd`, creating it on demand. */
   async withProc(cwd, fn, signal) {
     const entry = await this.#acquire(cwd, signal)
+    if (this.#closed) throw new Error(UNLOADED)
     signal?.throwIfAborted()
     entry.busy += 1
     entry.lastUsed = Date.now()
@@ -48,15 +52,19 @@ export class ProcPool {
   }
 
   async #acquire(cwd, signal) {
+    if (this.#closed) throw new Error(UNLOADED)
     signal?.throwIfAborted()
     const existing = this.#entries.get(cwd)
     if (existing !== undefined && existing.proc.alive) return existing
 
-    let started = this.#pending.get(cwd)
-    if (started === undefined) {
-      started = this.#start(cwd).finally(() => this.#pending.delete(cwd))
-      this.#pending.set(cwd, started)
+    let pending = this.#pending.get(cwd)
+    if (pending === undefined) {
+      const proc = new UnicaProc({ cwd, config: this.config, log: this.log })
+      const started = this.#start(cwd, proc).finally(() => this.#pending.delete(cwd))
+      pending = { proc, started }
+      this.#pending.set(cwd, pending)
     }
+    const { started } = pending
     if (!signal) return started
 
     // Only this caller stops waiting. Other calls may need the same handshake.
@@ -71,7 +79,7 @@ export class ProcPool {
     }
   }
 
-  async #start(cwd) {
+  async #start(cwd, proc) {
     const stale = this.#entries.get(cwd)
     if (stale !== undefined) {
       stale.proc.close('unica process was replaced')
@@ -79,16 +87,16 @@ export class ProcPool {
     }
     this.#makeRoom()
 
-    const proc = new UnicaProc({ cwd, config: this.config, log: this.log })
     try {
       await proc.start()
-      this.log?.info?.(`unica-native: started unica in ${cwd}`)
+      if (this.#closed) throw new Error(UNLOADED)
       const entry = { proc, busy: 0, lastUsed: Date.now() }
       this.#entries.set(cwd, entry)
+      this.log?.info?.(`unica-native: started unica in ${cwd}`)
       return entry
     } catch (error) {
       proc.close('unica process failed to start')
-      this.log?.error?.(`unica-native: failed to start unica in ${cwd}: ${error.message}`)
+      if (!this.#closed) this.log?.error?.(`unica-native: failed to start unica in ${cwd}: ${error.message}`)
       throw error
     }
   }
@@ -123,10 +131,11 @@ export class ProcPool {
   }
 
   closeAll() {
+    this.#closed = true
     clearInterval(this.#timer)
-    for (const [cwd, entry] of this.#entries) {
-      entry.proc.close('unica-native plugin unloaded')
-      this.#entries.delete(cwd)
-    }
+    for (const { proc } of this.#pending.values()) proc.close(UNLOADED)
+    for (const { proc } of this.#entries.values()) proc.close(UNLOADED)
+    this.#pending.clear()
+    this.#entries.clear()
   }
 }

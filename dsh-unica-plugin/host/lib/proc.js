@@ -43,7 +43,7 @@ export class UnicaProc {
     this.#child = spawn(this.config.nodePath, [launcher, this.config.pluginRoot], {
       cwd: this.cwd,
       env,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: process.platform === 'win32' ? ['pipe', 'pipe', 'pipe', 'ipc'] : ['pipe', 'pipe', 'pipe'],
     })
 
     this.#child.stdout.setEncoding('utf8')
@@ -150,7 +150,9 @@ export class UnicaProc {
       })
       if (killed.status === 0) return
     }
-    child.kill('SIGTERM')
+    // On Windows the launcher must terminate its own server, leaving the shared daemon alive.
+    if (child.connected) child.disconnect()
+    else child.kill('SIGTERM')
     const killTimer = setTimeout(() => {
       if (child.exitCode === null) child.kill('SIGKILL')
     }, 2000)

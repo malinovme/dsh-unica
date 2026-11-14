@@ -36,6 +36,16 @@ import { fileURLToPath } from 'node:url'
 
 const PLUGIN_ROOT = resolve(process.argv[2] ?? dirname(dirname(fileURLToPath(import.meta.url))))
 
+// The Windows native host closes IPC to stop this launcher and its direct MCP
+// server. TerminateProcess on the launcher alone would leave the server behind.
+let child
+if (process.connected) {
+  process.once('disconnect', () => {
+    if (child) child.kill()
+    else process.exit(0)
+  })
+}
+
 function die(message) {
   console.error(`unica launcher: ${message}`)
   process.exit(1)
@@ -400,7 +410,7 @@ if (selfTesting) {
 // were missing even when it is installed right next door.
 const childEnv = { ...process.env, UNICA_ARTIFACT_CACHE: cacheRoot }
 
-const child = spawn(command, commandArgs, { stdio: TEXT_FALLBACK ? ['pipe', 'pipe', 'inherit'] : 'inherit', env: childEnv })
+child = spawn(command, commandArgs, { stdio: TEXT_FALLBACK ? ['pipe', 'pipe', 'inherit'] : 'inherit', env: childEnv })
 if (TEXT_FALLBACK) relay(child)
 child.on('error', (error) => die(`cannot start ${command}: ${error.message}`))
 child.on('exit', (code, signal) => {
