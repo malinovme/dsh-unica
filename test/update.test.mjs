@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFile, execFileSync, spawnSync } from 'node:child_process'
+import { mkdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, utimes, writeFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -17,7 +18,7 @@ const hasPowerShell = process.platform === 'win32' || !!process.env.UNICA_TEST_P
   spawnSync(powershell, ['-NoProfile', '-Command', 'exit 0']).status === 0
 const oldProfile = '# Existing profile\n- id: user-settings\n'
 const entrypoint = `
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 const arg = (flag) => process.argv[process.argv.indexOf(flag) + 1]
@@ -26,7 +27,7 @@ mkdirSync(dirname(patch), { recursive: true })
 writeFileSync(patch, dirname(fileURLToPath(import.meta.url)))
 if (process.env.FIXTURE_HOLD) {
   writeFileSync(process.env.FIXTURE_HOLD, String(process.pid))
-  setInterval(() => {}, 1000)
+  const timer = setInterval(() => { if (existsSync(process.env.FIXTURE_HOLD + '.finish')) clearInterval(timer) }, 25)
 }
 if (process.env.FIXTURE_FAIL === '1') process.exit(37)
 `
@@ -60,7 +61,14 @@ for (const wrapper of ['sh', 'ps1']) {
     await new Promise((ok, fail) => server.once('error', fail).listen(0, '127.0.0.1', ok))
     t.after(() => new Promise((ok) => server.close(ok)))
     const url = 'http://127.0.0.1:' + server.address().port
-    for (const scenario of ['checksum-mismatch', 'corrupt', 'missing-installer', 'failed-upgrade', 'failed-first-install', 'success', 'unrelated-directory', 'update-in-progress', 'interrupted-after-backup', 'killed-updater', 'committed-update']) {
+    const editedProfile = oldProfile + '# settings edited during update\n'
+    const scenarios = [
+      'checksum-mismatch', 'corrupt', 'missing-installer', 'failed-upgrade', 'failed-first-install',
+      'first-install', 'success', 'unrelated-directory', 'update-in-progress', 'interrupted-after-backup',
+      'killed-updater', 'committed-update', 'edited-during-update', 'interrupted-publication',
+      'legacy-profile-conflict', wrapper === 'ps1' ? 'reused-pid' : 'claim-collision',
+    ]
+    for (const scenario of scenarios) {
       await t.test(scenario, async () => {
         const dir = join(root, scenario)
         const install = join(dir, 'plugin with spaces')
@@ -71,8 +79,9 @@ for (const wrapper of ['sh', 'ps1']) {
           await mkdir(transaction, { recursive: true })
           await writeFile(join(transaction, 'owner'), 'another updater')
         }
-        await mkdir(dirname(profile), { recursive: true })
-        if (scenario !== 'failed-first-install') {
+        await mkdir(dir, { recursive: true })
+        if (!['first-install', 'failed-first-install'].includes(scenario)) {
+          await mkdir(dirname(profile), { recursive: true })
           await writeFile(profile, oldProfile)
           await mkdir(install)
           await writeFile(join(install, 'old.txt'), 'old')
@@ -91,17 +100,35 @@ for (const wrapper of ['sh', 'ps1']) {
           '-Profile', 'web', '-DshHome', home, '-NoVerify',
         ]
         const retry = extra => run(command, args, { env: { ...env, ...extra }, timeout: 30_000 })
-        if (scenario === 'killed-updater') {
+        if (scenario === 'claim-collision') {
+          // A legacy updater can claim even an empty directory while we download.
+          const claim = () => { mkdirSync(transaction); server.off('request', claim) }
+          server.prependListener('request', claim)
+          await assert.rejects(retry({}), /cannot claim transaction/)
+          assert.deepEqual(await readdir(transaction), [])
+          assert.equal(await readFile(profile, 'utf8'), oldProfile)
+          return
+        }
+        if (scenario === 'killed-updater' || scenario === 'edited-during-update') {
           const hold = join(dir, 'fixture.pid')
           const interrupted = retry({ FIXTURE_HOLD: hold })
-          const stopped = assert.rejects(interrupted)
+          const stopped = scenario === 'edited-during-update' ? assert.rejects(interrupted, /profile changed during update/) : assert.rejects(interrupted)
           let pid
           try {
             for (let attempts = 0; attempts < 200 && !pid; attempts++) {
               pid = Number(await readFile(hold, 'utf8').catch(() => ''))
               if (!pid) await delay(50)
             }
-            assert.ok(pid, 'candidate must have changed the profile')
+            assert.ok(pid, 'candidate must have written its draft')
+            assert.equal(await readFile(profile, 'utf8'), oldProfile)
+            if (scenario === 'edited-during-update') {
+              await writeFile(profile, editedProfile)
+              await writeFile(hold + '.finish', '')
+              await stopped
+              assert.equal(await readFile(profile, 'utf8'), editedProfile)
+              assert.equal(await readFile(join(install, 'old.txt'), 'utf8'), 'old')
+              return
+            }
             await assert.rejects(retry({}), /another updater/)
             const hostExited = new Promise(resolve => interrupted.child.once('exit', resolve))
             interrupted.child.kill('SIGKILL')
@@ -109,24 +136,43 @@ for (const wrapper of ['sh', 'ps1']) {
             // The install.mjs child may outlive its shell. Its write access
             // must expire before rollback can start.
             await assert.rejects(retry({}), /another updater|still active/)
-            assert.equal(await readFile(profile, 'utf8'), install)
+            assert.equal(await readFile(profile, 'utf8'), oldProfile)
+            await writeFile(profile, editedProfile)
           } finally {
-            if (pid) { try { process.kill(pid, 'SIGKILL') } catch (err) { if (err.code !== 'ESRCH') throw err } }
+            if (pid && scenario === 'killed-updater') { try { process.kill(pid, 'SIGKILL') } catch (err) { if (err.code !== 'ESRCH') throw err } }
             interrupted.child.kill('SIGKILL')
             await stopped
           }
           await rm(hold, { force: true })
         }
-        if (scenario === 'interrupted-after-backup' || scenario === 'committed-update') {
+        if (['interrupted-after-backup', 'committed-update', 'reused-pid', 'interrupted-publication', 'legacy-profile-conflict'].includes(scenario)) {
           // Durable on-disk states immediately after the first rename, or
           // after committing a successful update but before cleanup.
           await mkdir(transaction)
-          await writeFile(join(transaction, 'journal-v1'), profile)
+          await writeFile(join(transaction, scenario === 'interrupted-publication' ? 'journal-v2' : 'journal-v1'), profile)
           await writeFile(join(transaction, 'prepared'), '')
           await writeFile(join(transaction, 'profile'), oldProfile)
           await rename(install, join(transaction, 'previous'))
-          if (scenario === 'interrupted-after-backup') {
+          if (scenario === 'interrupted-after-backup' || scenario === 'reused-pid') {
             await mkdir(join(transaction, 'new'))
+            await writeFile(profile, editedProfile)
+            if (scenario === 'reused-pid') {
+              const pidFile = join(transaction, 'old.ticket.pid')
+              await writeFile(pidFile, String(process.pid))
+              await utimes(pidFile, new Date(0), new Date(0))
+            }
+          } else if (scenario === 'legacy-profile-conflict') {
+            await mkdir(install)
+            await writeFile(profile, editedProfile)
+          } else if (scenario === 'interrupted-publication') {
+            const draftDir = wrapper === 'ps1' ? join(dirname(profile), '.unica-profile-' + 'a'.repeat(32)) : join(transaction, 'draft')
+            await mkdir(draftDir)
+            await writeFile(join(draftDir, 'cordis.patch.yml'), 'verified settings')
+            if (wrapper === 'ps1') await writeFile(join(transaction, 'draft-name'), basename(draftDir))
+            await writeFile(join(transaction, 'publishing-profile'), '')
+            await mkdir(install)
+            await writeFile(join(install, 'install.mjs'), entrypoint)
+            await writeFile(join(install, 'package.json'), '{"name":"dsh-plugin-unica"}')
           } else {
             await mkdir(install)
             await writeFile(join(install, 'install.mjs'), entrypoint)
@@ -135,20 +181,25 @@ for (const wrapper of ['sh', 'ps1']) {
             await writeFile(join(transaction, 'committed'), '')
           }
         }
-        if (['interrupted-after-backup', 'killed-updater', 'committed-update'].includes(scenario)) {
+        if (['interrupted-after-backup', 'killed-updater', 'committed-update', 'reused-pid', 'interrupted-publication', 'legacy-profile-conflict'].includes(scenario)) {
           // Fail the new update before publishing anything. This exposes the
           // state restored by recovery, including the previously edited profile.
           invalidChecksum = true
           await assert.rejects(retry({}), /checksum mismatch/i)
           invalidChecksum = false
-          if (scenario === 'committed-update') {
-            assert.equal(await readFile(profile, 'utf8'), 'committed settings')
+          if (scenario === 'committed-update' || scenario === 'interrupted-publication') {
+            assert.equal(await readFile(profile, 'utf8'), scenario === 'committed-update' ? 'committed settings' : 'verified settings')
             assert.equal(await readFile(join(install, 'install.mjs'), 'utf8'), entrypoint)
           } else {
-            assert.equal(await readFile(profile, 'utf8'), oldProfile)
+            assert.equal(await readFile(profile, 'utf8'), editedProfile)
             assert.equal(await readFile(join(install, 'old.txt'), 'utf8'), 'old')
           }
           await assert.rejects(readdir(transaction), { code: 'ENOENT' })
+          if (scenario === 'legacy-profile-conflict') {
+            const copies = (await readdir(dir)).filter(name => name.startsWith('.unica-profile-backup'))
+            assert.equal(copies.length, 1)
+            assert.equal(await readFile(join(dir, copies[0], 'cordis.patch.yml'), 'utf8'), oldProfile)
+          }
           payload = release
           await retry({})
           assert.equal(await readFile(profile, 'utf8'), install)
@@ -156,7 +207,7 @@ for (const wrapper of ['sh', 'ps1']) {
           return
         }
         const update = run(command, args, { env, timeout: 30_000 })
-        if (scenario === 'success') {
+        if (scenario === 'success' || scenario === 'first-install') {
           await update
           assert.equal(await readFile(profile, 'utf8'), install)
           assert.equal(await readFile(join(install, 'install.mjs'), 'utf8'), entrypoint)
@@ -173,7 +224,7 @@ for (const wrapper of ['sh', 'ps1']) {
             if (scenario !== 'unrelated-directory') assert.equal(await readFile(join(install, 'install.mjs'), 'utf8'), '// old installer')
           }
         }
-        const expected = scenario === 'failed-first-install' ? [basename(home)] : [basename(home), basename(install)]
+        const expected = scenario === 'failed-first-install' ? (wrapper === 'ps1' ? [basename(home)] : []) : [basename(home), basename(install)]
         if (scenario === 'update-in-progress') {
           assert.equal(await readFile(join(transaction, 'owner'), 'utf8'), 'another updater')
           expected.push(basename(transaction))

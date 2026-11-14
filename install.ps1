@@ -82,19 +82,74 @@ function Test-UnicaPlugin([string]$Directory) {
   return (([IO.File]::ReadAllText($package) | ConvertFrom-Json).name -ceq 'dsh-plugin-unica')
 }
 
+$publishScript = @'
+const fs = require('node:fs'), path = require('node:path')
+let [source, target, baseline] = process.argv.slice(1)
+while (fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink())
+  target = path.resolve(path.dirname(target), fs.readlinkSync(target))
+fs.mkdirSync(path.dirname(target), { recursive: true })
+// The symlink target may live on a different filesystem.
+const tmp = path.join(path.dirname(target), '.unica-' + require('node:crypto').randomUUID())
+try {
+  fs.copyFileSync(source, tmp, fs.constants.COPYFILE_EXCL)
+  const read = p => fs.existsSync(p) ? fs.readFileSync(p) : null
+  const original = read(baseline), live = read(target)
+  if (live === null ? original === null : original !== null && live.equals(original)) {
+    fs.renameSync(tmp, target)
+  } else {
+    console.error('keeping changed profile: ' + target)
+  }
+} finally { fs.rmSync(tmp, { force: true }) }
+'@
+$probeScript = @'
+const net = require('node:net')
+const name = 'unica-' + process.argv[1]
+const endpoint = process.platform === 'win32' ? '\\\\.\\pipe\\' + name : '/tmp/' + name
+const socket = net.connect(endpoint)
+socket.on('connect', () => { socket.destroy(); process.exitCode = 2 })
+socket.on('error', err => { if (!['ENOENT', 'ECONNREFUSED'].includes(err.code)) throw err })
+'@
 $code = 1
 $ownsTransaction = $false
 $updateLock = $null
 function Restore-Transaction([string]$ProfilePath) {
   if (-not [IO.File]::Exists((Join-Path $tx 'prepared'))) { return }
-  if (-not [IO.Directory]::Exists($stage) -and [IO.Directory]::Exists($install)) {
+  $candidatePublished = -not [IO.Directory]::Exists($stage) -and [IO.Directory]::Exists($install)
+  if ($candidatePublished -and -not [IO.File]::Exists((Join-Path $tx 'journal-v2')) -and
+      [IO.File]::Exists($savedProfile) -and -not (Test-OriginalProfile $ProfilePath)) {
+    $dir = Join-Path $parent ('.unica-profile-backup-' + [guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($dir) | Out-Null
+    [IO.File]::Copy($savedProfile, (Join-Path $dir 'cordis.patch.yml'))
+    Say "  keeping current profile; previous profile saved to $dir"
+  }
+  if ($candidatePublished) {
     [IO.Directory]::Move($install, $stage)
   }
   if ([IO.Directory]::Exists($backup)) { [IO.Directory]::Move($backup, $install) }
-  if ([IO.File]::Exists($savedProfile)) { [IO.File]::Copy($savedProfile, $ProfilePath, $true) }
-  elseif ([IO.File]::Exists($ProfilePath)) { [IO.File]::Delete($ProfilePath) }
 }
+
+function Test-OriginalProfile([string]$ProfilePath) {
+  if (-not [IO.File]::Exists($savedProfile)) { return -not [IO.File]::Exists($ProfilePath) }
+  if (-not [IO.File]::Exists($ProfilePath)) { return $false }
+  return (Get-FileHash -LiteralPath $savedProfile).Hash -eq (Get-FileHash -LiteralPath $ProfilePath).Hash
+}
+
+function Get-DraftDirectory([string]$ProfilePath) {
+  $name = [IO.File]::ReadAllText((Join-Path $tx 'draft-name'))
+  if ($name -notmatch '^\.unica-profile-[0-9a-f]{32}$') { Die "invalid draft name at $tx" }
+  return Join-Path ([IO.Path]::GetDirectoryName($ProfilePath)) $name
+}
+function Publish-Profile([string]$ProfilePath) {
+  $draft = Join-Path (Get-DraftDirectory $ProfilePath) 'cordis.patch.yml'
+  & node -e $publishScript -- $draft $ProfilePath $savedProfile
+  if ($LASTEXITCODE -ne 0) { Die "could not publish profile at $ProfilePath" }
+}
+
 function Remove-FinishedTransaction {
+  if ([IO.File]::Exists((Join-Path $tx 'draft-name'))) {
+    $dir = Get-DraftDirectory ([IO.File]::ReadAllText((Join-Path $tx 'journal-v2')))
+    if ([IO.Directory]::Exists($dir)) { [IO.Directory]::Delete($dir, $true) }
+  }
   $retired = Join-Path $parent ('.unica-finished-' + [guid]::NewGuid().ToString('N'))
   [IO.Directory]::Move($tx, $retired)
   Remove-Item -LiteralPath $retired -Recurse -Force
@@ -118,7 +173,8 @@ try {
   try {
     $updateLock = [IO.File]::Open("$tx.lock", 'OpenOrCreate', 'ReadWrite', 'None')
   } catch [IO.IOException] { Die "another updater holds $tx.lock, or the lock file is inaccessible" }
-  $journal = Join-Path $tx 'journal-v1'
+  $journal = Join-Path $tx 'journal-v2'
+  if (-not [IO.File]::Exists($journal)) { $journal = Join-Path $tx 'journal-v1' }
   if ([IO.Directory]::Exists($tx)) {
     if (((Get-Item -LiteralPath $tx -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
         -not [IO.File]::Exists($journal)) { Die "unrecognized or active update at $tx; see README: recovery" }
@@ -128,13 +184,23 @@ try {
         Die "invalid profile path in $tx"
       }
       # A killed PowerShell host can leave install.mjs running. Revoke its
-      # unique ticket first, then check whether it already registered its PID.
+      # unique ticket first, then probe the socket held by that exact child.
       Get-ChildItem -LiteralPath $tx -Filter '*.ticket' | Remove-Item -Force
+      foreach ($guardFile in (Get-ChildItem -LiteralPath $tx -Filter '*.ticket.mjs')) {
+        & node -e $probeScript -- $guardFile.BaseName
+        if ($LASTEXITCODE -eq 2) { Die 'installer child is still active' }
+        if ($LASTEXITCODE -ne 0) { Die 'could not check installer child' }
+      }
+      # Older journals registered only a PID. A later start time proves reuse.
       foreach ($pidFile in (Get-ChildItem -LiteralPath $tx -Filter '*.pid')) {
         $childId = [int][IO.File]::ReadAllText($pidFile.FullName)
-        if (Get-Process -Id $childId -ErrorAction SilentlyContinue) { Die "installer child $childId is still active" }
+        $running = Get-Process -Id $childId -ErrorAction SilentlyContinue
+        if ($running -and (-not $running.StartTime -or $running.StartTime.ToUniversalTime() -le $pidFile.LastWriteTimeUtc)) {
+          Die "installer child $childId is still active"
+        }
       }
-      Restore-Transaction $oldPatch
+      if ([IO.File]::Exists((Join-Path $tx 'publishing-profile'))) { Publish-Profile $oldPatch }
+      else { Restore-Transaction $oldPatch }
     }
     Remove-FinishedTransaction
     Say '  recovered interrupted update'
@@ -185,7 +251,7 @@ try {
   $claim = Join-Path $parent ('.unica-claim-' + [guid]::NewGuid().ToString('N'))
   [IO.Directory]::CreateDirectory($claim) | Out-Null
   try {
-    [IO.File]::WriteAllText((Join-Path $claim 'journal-v1'), $patch)
+    [IO.File]::WriteAllText((Join-Path $claim 'journal-v2'), $patch)
     [IO.Directory]::Move($claim, $tx)
     $ownsTransaction = $true
   } finally {
@@ -196,7 +262,16 @@ try {
   if ($LASTEXITCODE -ne 0) { Die 'cannot unpack the archive.' }
   if (-not (Test-UnicaPlugin $stage)) { Die 'the archive does not contain the Unica plugin.' }
 
-  if ([IO.File]::Exists($patch)) { [IO.File]::Copy($patch, $savedProfile) }
+  $draftName = '.unica-profile-' + [guid]::NewGuid().ToString('N')
+  [IO.File]::WriteAllText((Join-Path $tx 'draft-name'), $draftName)
+  $draftDir = Get-DraftDirectory $patch
+  [IO.Directory]::CreateDirectory($draftDir) | Out-Null
+  $draft = Join-Path $draftDir 'cordis.patch.yml'
+  $draftProfile = Join-Path $Profile $draftName
+  if ([IO.File]::Exists($patch)) {
+    [IO.File]::Copy($patch, $savedProfile)
+    [IO.File]::Copy($savedProfile, $draft)
+  }
   if (Test-Path -LiteralPath $install) {
     $item = Get-Item -LiteralPath $install -Force
     if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
@@ -209,30 +284,43 @@ try {
   [IO.File]::WriteAllText((Join-Path $tx 'prepared'), '')
   if ([IO.Directory]::Exists($install)) { [IO.Directory]::Move($install, $backup) }
   [IO.Directory]::Move($stage, $install)
-  $arguments = @('--target', $Target, '--profile', $Profile, '--dsh-home', $DshHome)
+  $arguments = @('--target', $Target, '--profile', $draftProfile, '--dsh-home', $DshHome)
   if (-not $NoVerify) { $arguments += '--verify' }
   $ticket = Join-Path $tx ([guid]::NewGuid().ToString('N') + '.ticket')
   [IO.File]::WriteAllText($ticket, '')
-  # This preload runs only in the installer process. Writing the unique PID
-  # before checking admission makes recovery safe on both sides of spawn.
-  $guard = "$ticket.cjs"
+  # The socket lives exactly as long as this Node process. Register before
+  # checking admission, so revoking a ticket also covers a delayed startup.
+  $guard = "$ticket.mjs"
   [IO.File]::WriteAllText($guard, @'
-const fs = require('node:fs')
-const ticket = __filename.slice(0, -4)
-fs.writeFileSync(ticket + '.pid.tmp', String(process.pid))
-fs.renameSync(ticket + '.pid.tmp', ticket + '.pid')
-if (!fs.existsSync(ticket)) process.exit(1)
+import { existsSync } from 'node:fs'
+import { createServer } from 'node:net'
+import { basename } from 'node:path'
+import { fileURLToPath } from 'node:url'
+const ticket = fileURLToPath(import.meta.url).slice(0, -4)
+const name = 'unica-' + basename(ticket)
+const endpoint = process.platform === 'win32' ? '\\\\.\\pipe\\' + name : '/tmp/' + name
+const server = createServer(socket => socket.end())
+await new Promise((resolve, reject) => server.once('error', reject).listen(endpoint, resolve))
+if (!existsSync(ticket)) process.exit(1)
+server.unref()
 '@)
-  & node --require $guard (Join-Path $install 'install.mjs') @arguments
+  # --import takes a URL. A native Windows path is not a valid ESM specifier.
+  $guardUrl = ([uri]::new($guard)).AbsoluteUri
+  & node --import $guardUrl (Join-Path $install 'install.mjs') @arguments
   $code = $LASTEXITCODE
   if ($code -eq 0) {
+    if (-not [IO.File]::Exists($draft)) { Die 'installer did not prepare a profile' }
+    if (-not (Test-OriginalProfile $patch)) { Die "profile changed during update: $patch" }
+    [IO.File]::WriteAllText((Join-Path $tx 'publishing-profile'), '')
+    Publish-Profile $patch
     [IO.File]::WriteAllText((Join-Path $tx 'committed'), '')
     Say "  installed to: $install"
   }
 } finally {
   try {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
-    if ($ownsTransaction) {
+    if ($ownsTransaction -and (-not [IO.File]::Exists((Join-Path $tx 'publishing-profile')) -or
+        [IO.File]::Exists((Join-Path $tx 'committed')))) {
       if (-not [IO.File]::Exists((Join-Path $tx 'committed'))) {
         try { Restore-Transaction $patch }
         catch { Die "rollback incomplete; recovery files retained at ${tx}: $($_.Exception.Message)" }

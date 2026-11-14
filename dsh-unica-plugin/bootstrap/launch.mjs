@@ -456,7 +456,10 @@ child = spawn(command, commandArgs, { stdio: TEXT_FALLBACK ? ['pipe', 'pipe', 'i
 if (TEXT_FALLBACK) relay(child)
 child.on('error', (error) => die(`cannot start ${command}: ${error.message}`))
 child.on('exit', (code, signal) => {
-  if (signal !== null) return process.kill(process.pid, signal)
+  if (signal !== null) {
+    process.off(signal, forwardSignal)
+    return process.kill(process.pid, signal)
+  }
   // Drain the last rewritten lines before leaving: a piped stdout is flushed
   // asynchronously, and a bare exit() here would truncate the final response.
   const finish = () => process.exit(code ?? 1)
@@ -467,6 +470,9 @@ child.on('exit', (code, signal) => {
     finish()
   })
 })
+function forwardSignal(signal) {
+  child.kill(signal)
+}
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => child.kill(signal))
+  process.on(signal, forwardSignal)
 }
