@@ -30,7 +30,7 @@ irm https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.ps1 | iex
 `-Version` скрипту):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | UNICA_VERSION=v0.15.0.9 sh
+curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | UNICA_VERSION=v0.15.0.10 sh
 ```
 
 Скрипт сам выбирает профиль (`desktop`, если он есть, иначе `web`) и после
