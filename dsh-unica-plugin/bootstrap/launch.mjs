@@ -70,8 +70,8 @@ const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
 const wanted = target()
 
 // Since 0.13 the manifest describes *artifacts*, not one runtime archive: the
-// core server plus the engines Unica borrows (`bsl-analyzer`, `rlm-tools-bsl`,
-// `v8-runner`). Unica resolves an engine from the artifact cache, never from its
+// core server plus the engines Unica borrows (`bsl-analyzer` and `v8-runner`).
+// Unica resolves an engine from the artifact cache, never from its
 // own bundle, so the layout below is the whole contract: get it wrong and every
 // engine-backed call dies as `bundled_tool_missing`, with a message that points
 // at a directory nothing is supposed to exist in.
@@ -304,7 +304,7 @@ async function installArtifact(name) {
 
 /** Engines the runtime expects but this cache does not have yet, cheapest first. */
 function missingEngines() {
-  const order = ['v8-runner', 'bsl-analyzer', 'rlm-tools-bsl']
+  const order = ['v8-runner', 'bsl-analyzer']
   return Object.keys(artifacts)
     .filter((name) => name !== 'unica' && !ready(artifactAt(name)))
     .sort((left, right) => order.indexOf(left) - order.indexOf(right))

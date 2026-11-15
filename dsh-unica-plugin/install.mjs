@@ -340,7 +340,8 @@ const PORT_RULES = `Unica rules for this session:
 - \`unica.check\` runs every validator a node's kind owns. The per-kind
   \`*.validate\` tools of earlier versions no longer exist.
 - Tool arguments are not described on the wire. What a node accepts is its
-  \`can\` list (\`unica.view\` with \`filter: {sections: ["can"]}\`), and a
+  \`can\` list in \`unica.view {at}\`. Read the operation schema at
+  \`<node>.Can.<operation>\`. A
   refused call names the offending field in \`diagnostics[].message\`.
   \`unica.docs\` searches 1C documentation, not tool contracts.
 - \`unica.search\` with \`corpus: "text"\` matches BSL code only; metadata
