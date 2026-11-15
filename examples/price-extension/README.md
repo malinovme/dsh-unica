@@ -41,6 +41,8 @@ node examples/verify-price-extension.mjs --build  # дополнительно: 
 
 ### 3. Собрать изменённое расширение
 
+В этом примере аргумент `infobase` опущен. В Unica 0.15.0 закреплённый адаптер использует базу `origin` по умолчанию.
+
 1. Вызовите `unica.run` с [make.json](requests/make.json). В нём `extension: "tutorial"` — имя набора из `v8project.yaml`. Ожидайте `dryRun: true`, `plan.artifact.kind: "cfe"`, `providerDispatched: false`. В чистой копии файла `build/out/Учебное.cfe` ещё нет. Для этого шага требуется `v8-runner`.
 2. Повторите `unica.run` с теми же `op` и `args`, заменив `dryRun` на `false`. Если в ответе любого из этих вызовов есть `data.task.taskId`, дождитесь именно этого задания через `unica.task.result {"taskId":"<id>","waitMs":5000}`. Пока ответ содержит `data.task`, запрашивайте результат с тем же ID. Для ожидания не запускайте `make` повторно.
 3. Успех — это `providerDispatched: true`, `artifact.kind: "cfe"` и **непустой файл** `build/out/Учебное.cfe`. Сверьте его размер и SHA-256 с `data.artifact.size` и `data.artifact.sha256`. На macOS/Linux это можно сделать командой `shasum -a 256 build/out/Учебное.cfe`, в PowerShell — `Get-FileHash -Algorithm SHA256 build/out/Учебное.cfe`. Скрипт `--build` делает обе сверки автоматически; фиксированного хеша для всех сборок нет.

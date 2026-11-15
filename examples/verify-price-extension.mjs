@@ -41,6 +41,9 @@ try {
   for (const file of ['src', 'ext', 'v8project.yaml']) await cp(join(sample, file), join(cwd, file), { recursive: true })
   console.log(`Рабочая копия: ${cwd}`)
   await proc.start()
+  const manifest = JSON.parse(await readFile(join(proc.config.pluginRoot, 'runtime-manifest.json'), 'utf8'))
+  assert.equal(proc.serverInfo?.version, manifest.pluginVersion, 'Версия MCP-сервера должна совпадать с манифестом порта')
+  console.log(`Проверяется Unica ${proc.serverInfo.version}`)
   const workspace = await call('view', {})
   assert.deepEqual(workspace.sourceSets.map(s => [s.name, s.kind]), [['main', 'configuration'], ['tutorial', 'extension']])
 
