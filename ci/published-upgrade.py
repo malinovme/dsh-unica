@@ -1,13 +1,18 @@
-"""Verify published port upgrades on a disposable Ubuntu or Windows runner."""
+"""Verify a published installation upgrading to a checkout or another published release."""
 import base64
+from contextlib import contextmanager
+from functools import partial
 import hashlib
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tarfile
 import tempfile
+from threading import Thread
 from urllib.request import urlopen
 
 REPO = Path(__file__).resolve().parents[1]
@@ -44,8 +49,43 @@ def download(url):
         return response.read()
 
 
-def release(tag, root):
-    url = f"{SOURCE}/releases/download/{tag}/{ASSET}"
+def published_url(tag):
+    return f"{SOURCE}/releases/download/{tag}"
+
+
+@contextmanager
+def checkout_release(old, root):
+    source = root / "candidate-source"
+    shutil.copytree(REPO / "dsh-unica-plugin", source, ignore=shutil.ignore_patterns("node_modules"))
+    metadata = source / "package.json"
+    package = json.loads(metadata.read_bytes())
+    tag = "v" + package["version"]
+    # Installer-only PRs usually keep the published version. Give the isolated
+    # candidate a distinct identity so the fault witness proves it actually ran.
+    baseline = version(old)
+    if version(tag) <= baseline:
+        revision = baseline[-1] + 1
+        package["version"] = ".".join(map(str, (*baseline[:-1], revision)))
+        package["unica"]["portRevision"] = str(revision)
+        metadata.write_text(json.dumps(package, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        tag = "v" + package["version"]
+
+    assets = root / "assets"
+    assets.mkdir()
+    subprocess.run(["node", str(source / "package.mjs"), "--out", str(assets / ASSET)], check=True)
+    handler = partial(SimpleHTTPRequestHandler, directory=str(assets))
+    with ThreadingHTTPServer(("127.0.0.1", 0), handler) as server:
+        thread = Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            yield tag, f"http://127.0.0.1:{server.server_port}"
+        finally:
+            server.shutdown()
+            thread.join()
+
+
+def release(tag, root, base_url):
+    url = f"{base_url}/{ASSET}"
     manifest = json.loads(download(url + ".sha256.json"))
     archive = download(url)
     assert manifest["version"] == tag[1:] and digest(archive) == manifest["sha256"], tag
@@ -54,7 +94,7 @@ def release(tag, root):
     with tarfile.open(path) as tar:
         files = {f.name: digest(tar.extractfile(f).read()) for f in tar if f.isfile()}
     assert len(files) == manifest["fileCount"] and set(files) == set(manifest["contents"])
-    print(f"{tag}: {len(files)} published files, SHA-256 {manifest['sha256']}", flush=True)
+    print(f"{tag}: {len(files)} files, SHA-256 {manifest['sha256']}", flush=True)
     return files, manifest
 
 
@@ -68,15 +108,17 @@ def tagged_file(tag, path):
     return subprocess.check_output(["git", "show", f"{tag}:{path}"], cwd=REPO)
 
 
-def verify(old, new, root):
+def verify(old, new, root, candidate_url=None):
     plugin, home, cwd = root / "dsh-unica-plugin", root / "dsh home", root / "workspace"
     cwd.mkdir()
     profile = home / "profiles/web/cordis.patch.yml"
     windows = os.name == "nt"
     wrapper = root / ("install.ps1" if windows else "install.sh")
     staged_profile = version(new) >= (0, 15, 0, 7)
-    print(f"Checking published upgrade {old} -> {new} on {os.name}", flush=True)
-    releases = {tag: release(tag, root) for tag in (old, new)}
+    source = "checkout build" if candidate_url else "published release"
+    print(f"Checking published {old} -> {source} {new} on {os.name}", flush=True)
+    urls = {old: published_url(old), new: candidate_url or published_url(new)}
+    releases = {tag: release(tag, root, url) for tag, url in urls.items()}
     env = {**os.environ, "UNICA_INSTALL_DIR": str(plugin), "UNICA_DSH_HOME": str(home),
            "UNICA_PROFILE": "web", "UNICA_TARGET": "preset", "UNICA_VERIFY": "1",
            "UNICA_ARTIFACT_DELIVERY": "off", "UNICA_REPO": "malinovme/dsh-unica"}
@@ -92,20 +134,25 @@ def verify(old, new, root):
         return output
 
     def install(tag, fault=None):
-        if tag == new and os.environ.get("CHECKOUT_INSTALLER") == "1":
+        if tag == new and (candidate_url or os.environ.get("CHECKOUT_INSTALLER") == "1"):
             wrapper.write_bytes((REPO / wrapper.name).read_bytes())
-            print(f"Using checked-out {wrapper.name} with published {tag}", flush=True)
+            print(f"Using checked-out {wrapper.name} with {source} {tag}", flush=True)
         else:
             wrapper.write_bytes(tagged_file(tag, wrapper.name))
         args = (["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper),
                  "-Version", tag, "-Profile", "web", "-Target", "preset", "-DshHome", str(home)]
                 if windows else ["sh", str(wrapper)])
         extra = {"UNICA_VERSION": tag}
+        if tag == new and candidate_url:
+            if windows:
+                args.extend(["-BaseUrl", candidate_url])
+            else:
+                extra["UNICA_BASE_URL"] = candidate_url
         if fault:
             extra["UNICA_LAUNCH_SELFTEST_COMMAND"] = json.dumps(["node", str(fault), str(plugin), str(profile), str(witness),
                                                                   "staged" if staged_profile else "live"])
         output = run(args, extra, expect_success=fault is None)
-        assert f"/releases/download/{tag}/" in output and re.search(r"sha256\s*:\s*ok", output)
+        assert f"{urls[tag]}/{ASSET}" in output and re.search(r"sha256\s*:\s*ok", output)
         if fault:
             assert "published-upgrade-test: intentional failure" in output
         else:
@@ -189,7 +236,7 @@ process.exit(23)
         for relative in ["test/native-bridge.test.mjs", "test/fixtures/workspace-server.mjs"]:
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(tagged_file(new, relative))
+            path.write_bytes((REPO / relative).read_bytes() if candidate_url else tagged_file(new, relative))
         output = run(["node", "--test", "--test-reporter=tap", "--test-name-pattern=closeAll",
                       str(root / "test/native-bridge.test.mjs")])
         for name in ["closeAll during initialize stops the worker and rejects every waiting call",
@@ -198,8 +245,15 @@ process.exit(23)
 
 
 if __name__ == "__main__":
-    old, new = os.environ["FROM_TAG"], os.environ["TO_TAG"]
-    if not version(old) < version(new) or version(new) < (0, 15, 0, 5):
-        raise SystemExit("choose increasing published tags; rollback requires target v0.15.0.5 or later")
+    old = os.environ.get("FROM_TAG") or os.environ["LATEST_TAG"]
+    new = os.environ.get("TO_TAG")
+    version(old)
     with tempfile.TemporaryDirectory(prefix="published upgrade ", dir=os.environ.get("RUNNER_TEMP")) as directory:
-        verify(old, new, Path(directory).resolve())
+        root = Path(directory).resolve()
+        if new:
+            if not version(old) < version(new) or version(new) < (0, 15, 0, 5):
+                raise SystemExit("choose increasing published tags; rollback requires target v0.15.0.5 or later")
+            verify(old, new, root)
+        else:
+            with checkout_release(old, root) as (tag, url):
+                verify(old, tag, root, url)
