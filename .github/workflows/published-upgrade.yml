@@ -1,23 +1,26 @@
 name: Published release upgrade
-run-name: Verify upgrade ${{ inputs.from_tag || 'v0.15.0.7' }} to ${{ inputs.to_tag || 'v0.15.0.8' }}
+run-name: Verify upgrade from ${{ inputs.from_tag || 'Latest' }} to ${{ inputs.to_tag || 'checkout' }}
 
 on:
   pull_request:
     paths:
       - 'install.sh'
       - 'install.ps1'
+      - 'dsh-unica-plugin/install.mjs'
+      - 'dsh-unica-plugin/installer/**'
+      - 'dsh-unica-plugin/package.mjs'
       - '.github/workflows/published-upgrade.yml'
       - 'ci/published-upgrade.py'
   workflow_dispatch:
     inputs:
       from_tag:
-        description: Installed release tag (e.g. v0.15.0.5)
+        description: Installed published tag (defaults to Latest)
         type: string
-        required: true
+        required: false
       to_tag:
-        description: Newer published release tag (e.g. v0.15.0.6)
+        description: Target published tag (leave empty to build the checkout)
         type: string
-        required: true
+        required: false
 
       checkout_installer:
         description: Test the checked-out installer for the target release
@@ -46,10 +49,18 @@ jobs:
       - name: Install DSH for Web profile composition
         shell: bash
         run: npm install --no-save --no-package-lock --prefix "$RUNNER_TEMP/dsh-harness" @deepseek-ai/dsh@0.2.2-rc.1
-      - name: Check upgrade and rollback using published assets
+      - name: Resolve latest published baseline
+        if: ${{ !inputs.from_tag }}
+        shell: bash
         env:
-          CHECKOUT_INSTALLER: ${{ (github.event_name == 'pull_request' || inputs.checkout_installer) && '1' || '0' }}
-          FROM_TAG: ${{ inputs.from_tag || 'v0.15.0.7' }}
-          TO_TAG: ${{ inputs.to_tag || 'v0.15.0.8' }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh api repos/malinovme/dsh-unica/releases/latest --jq .tag_name)
+          echo "LATEST_TAG=$tag" >> "$GITHUB_ENV"
+      - name: Check upgrade and rollback
+        env:
+          CHECKOUT_INSTALLER: ${{ inputs.checkout_installer && '1' || '0' }}
+          FROM_TAG: ${{ inputs.from_tag }}
+          TO_TAG: ${{ inputs.to_tag }}
           DSH_INSTALL_ROOT: ${{ runner.temp }}/dsh-harness
         run: python ci/published-upgrade.py
