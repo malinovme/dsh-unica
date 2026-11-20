@@ -34,14 +34,14 @@ node examples/verify-price-extension.mjs --build  # дополнительно: 
 
 ### 2. Добавить пояснение на форму
 
-1. Вызовите `unica.apply` с [edit-form.json](requests/edit-form.json). Ожидайте `data.mode: "preview"` и непустой `data.executionToken`. На диске [Form.xml](ext/DataProcessors/Учебное_РасчетЦены/Forms/Форма/Ext/Form.xml) всё ещё без элемента `ПодсказкаРасчета`.
+1. Вызовите `unica.apply` с [edit-form.json](requests/edit-form.json). Заголовок элемента передаётся в формате NStr как `ru = '…'`. Ожидайте `data.mode: "preview"` и непустой `data.executionToken`. На диске [Form.xml](ext/DataProcessors/Учебное_РасчетЦены/Forms/Форма/Ext/Form.xml) всё ещё без элемента `ПодсказкаРасчета`.
 2. Подставьте **полученный в этой копии** токен в `unica.diff {"executionToken":"<токен>"}`. В `data.chunks` должен быть только `DataProcessors/Учебное_РасчетЦены/Forms/Форма/Ext/Form.xml`. В части `after` видна новая `LabelDecoration` с текстом «Сумма = цена × количество, округление до 2 знаков».
 3. Если это нужная правка, вызовите `unica.apply {"executionToken":"<токен>"}` — без `at` и `ops`. Ожидайте `data.mode: "published"`. Теперь надпись есть на диске; её можно прочитать по адресу `tutorial:DataProcessor.Учебное_РасчетЦены.Form.Форма.Item.ПодсказкаРасчета` через `unica.view`.
 4. Вызовите `unica.check` по очереди с `{"at":"tutorial:DataProcessor.Учебное_РасчетЦены.Form.Форма"}` и `{"at":"tutorial:Configuration"}`. В обоих ответах ожидайте `data.status: "passed"`, валидаторы `form` и `cfe` соответственно.
 
 ### 3. Собрать изменённое расширение
 
-В этом примере аргумент `infobase` опущен. В Unica 0.15.0 закреплённый адаптер использует базу `origin` по умолчанию.
+В этом примере аргумент `infobase` опущен. Закреплённый адаптер использует базу `origin` по умолчанию.
 
 1. Вызовите `unica.run` с [make.json](requests/make.json). В нём `extension: "tutorial"` — имя набора из `v8project.yaml`. Ожидайте `dryRun: true`, `plan.artifact.kind: "cfe"`, `providerDispatched: false`. В чистой копии файла `build/out/Учебное.cfe` ещё нет. Для этого шага требуется `v8-runner`.
 2. Повторите `unica.run` с теми же `op` и `args`, заменив `dryRun` на `false`. Если в ответе любого из этих вызовов есть `data.task.taskId`, дождитесь именно этого задания через `unica.task.result {"taskId":"<id>","waitMs":5000}`. Пока ответ содержит `data.task`, запрашивайте результат с тем же ID. Для ожидания не запускайте `make` повторно.

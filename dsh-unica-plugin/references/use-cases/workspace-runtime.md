@@ -67,10 +67,13 @@ A preview does not write sources or read the current extension contents.
 ### Work the call must not wait for
 
 A long operation does not need a separate call: any `mcp__unica__unica_run_189d01f64719` invocation
-that outlives the handoff window becomes a durable Task. Keep the returned
-`taskId`, read the state with `mcp__unica__unica_task_get_011884f98058`, wait for a bounded interval with
-`mcp__unica__unica_task_result_67327c71a8ed`, and cancel with `mcp__unica__unica_task_cancel_fa69de1d41bf`; a client with native
-Tasks uses `tasks/get` and `tasks/cancel` instead. The terminal result never
+that outlives the handoff window becomes a durable Task. A protocol
+`2026-07-28` call that does not declare Tasks itself never sees the Task: it
+waits for the end and answers with the result. A session of an earlier
+protocol gets a receipt: keep the returned `taskId`, read the state with
+`mcp__unica__unica_task_get_011884f98058`, wait for a bounded interval with `mcp__unica__unica_task_result_67327c71a8ed`, and
+cancel with `mcp__unica__unica_task_cancel_fa69de1d41bf`; a client with native Tasks uses `tasks/get`
+and `tasks/cancel` instead. The terminal result never
 publishes raw stdout. The Task state is the authority for the outcome; a
 `working` state alone does not prove that the runner is making progress.
 
