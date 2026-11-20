@@ -59,6 +59,7 @@ try {
 
   const edit = await request('edit-form')
   const item = edit.ops[0].args.items[0]
+  const caption = 'Сумма = цена × количество, округление до 2 знаков'
   const relativeForm = 'DataProcessors/Учебное_РасчетЦены/Forms/Форма/Ext/Form.xml'
   const formFile = join(cwd, 'ext', relativeForm)
   const before = await readFile(formFile)
@@ -70,10 +71,10 @@ try {
   const diff = await call('diff', token)
   assert.equal(diff.truncated, false)
   assert.deepEqual([...new Set(diff.chunks.map(c => c.path))], [relativeForm])
-  assert.ok(diff.chunks.some(c => c.side === 'after' && c.content.includes(item.title)))
+  assert.ok(diff.chunks.some(c => c.side === 'after' && c.content.includes(caption)))
   assert.deepEqual(await readFile(formFile), before, 'Предпросмотр изменил исходный файл')
   assert.equal((await call('apply', token)).mode, 'published')
-  assert.ok((await readFile(formFile)).includes(item.title))
+  assert.ok((await readFile(formFile)).includes(caption))
   await call('view', { at: `${edit.at}.Item.${item.name}` })
   for (const [at, validator] of [[edit.at, 'form'], ['tutorial:Configuration', 'cfe']]) {
     const verdict = await call('check', { at })
