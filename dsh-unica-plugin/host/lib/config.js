@@ -14,6 +14,7 @@ const DEFAULTS = {
   defaultCwd: null,
   maxProcesses: 4,
   idleMs: 10 * 60 * 1000,
+  coldStartTimeoutMs: 5 * 60 * 1000,
   startupTimeoutMs: 30 * 1000,
   toolCallTimeoutMs: 10 * 60 * 1000,
 }
@@ -78,6 +79,7 @@ export function resolveConfig(raw, { pluginRoot = DEFAULT_PLUGIN_ROOT } = {}) {
     defaultCwd: expandPath(config.defaultCwd) ?? DEFAULTS.defaultCwd,
     maxProcesses: positiveInteger(config.maxProcesses, DEFAULTS.maxProcesses, 'maxProcesses'),
     idleMs: positiveInteger(config.idleMs, DEFAULTS.idleMs, 'idleMs'),
+    coldStartTimeoutMs: positiveInteger(config.coldStartTimeoutMs, DEFAULTS.coldStartTimeoutMs, 'coldStartTimeoutMs'),
     startupTimeoutMs: positiveInteger(config.startupTimeoutMs, DEFAULTS.startupTimeoutMs, 'startupTimeoutMs'),
     toolCallTimeoutMs: positiveInteger(config.toolCallTimeoutMs, DEFAULTS.toolCallTimeoutMs, 'toolCallTimeoutMs'),
   }

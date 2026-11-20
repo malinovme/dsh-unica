@@ -24,7 +24,7 @@
 // A crash during step 3 leaves the scratch directory behind, never a cache that
 // looks ready. That is the whole reason for the rename.
 import { createHash } from 'node:crypto'
-import { spawn, spawnSync } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
 import { chmod, link, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync, statSync } from 'node:fs'
@@ -33,17 +33,29 @@ import { pipeline } from 'node:stream/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { setTimeout as delay } from 'node:timers/promises'
 
 const PLUGIN_ROOT = resolve(process.argv[2] ?? dirname(dirname(fileURLToPath(import.meta.url))))
 
 // The Windows native host closes IPC to stop this launcher and its direct MCP
 // server. TerminateProcess on the launcher alone would leave the server behind.
 let child
-if (process.connected) {
-  process.once('disconnect', () => {
-    if (child) child.kill()
-    else process.exit(0)
-  })
+let unpacking
+
+function forwardSignal(signal) {
+  if (child) {
+    child.kill(signal)
+  } else {
+    unpacking?.kill(signal)
+    process.exit(0)
+  }
+}
+
+if (process.connected) process.once('disconnect', () => forwardSignal('SIGTERM'))
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, forwardSignal)
+
+function notifyHost(message) {
+  if (process.connected) process.send(message, () => {})
 }
 
 function die(message) {
@@ -142,15 +154,40 @@ async function repairArtifact(scratch, entry) {
   for (const path of last) await publish(path)
 }
 
+const TRANSIENT_NETWORK_CODES = new Set([
+  'EAI_AGAIN', 'ECONNABORTED', 'ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH', 'EPIPE', 'ETIMEDOUT',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET',
+])
+
+function networkFailure(error) {
+  return Object.assign(new Error(error.message, { cause: error }), {
+    transient: error.name === 'TimeoutError' || TRANSIENT_NETWORK_CODES.has(error.cause?.code ?? error.code),
+  })
+}
+
 /** Streams a URL to a file, returning its SHA-256. */
-async function download(url, destination) {
-  const response = await fetch(url, { redirect: 'follow' })
-  if (!response.ok || response.body === null) throw new Error(`HTTP ${response.status}`)
+async function download(url, destination, signal) {
+  let response
+  try {
+    response = await fetch(url, { redirect: 'follow', signal })
+  } catch (error) {
+    throw networkFailure(error)
+  }
+  if (!response.ok || response.body === null) {
+    await response.body?.cancel()
+    throw Object.assign(new Error(`HTTP ${response.status}`), {
+      transient: response.status === 408 || response.status === 429 || response.status >= 500,
+    })
+  }
   const hash = createHash('sha256')
   await pipeline(Readable.fromWeb(response.body), async function* (source) {
-    for await (const chunk of source) {
-      hash.update(chunk)
-      yield chunk
+    try {
+      for await (const chunk of source) {
+        hash.update(chunk)
+        yield chunk
+      }
+    } catch (error) {
+      throw networkFailure(error)
     }
   }, createWriteStream(destination))
   return hash.digest('hex')
@@ -194,7 +231,7 @@ async function sweepAbandonedScratch(name) {
 }
 
 /** Unpacks an archive into `dir`, using whichever tool the host actually has. */
-function unpack(archivePath, dir, assetName) {
+async function unpack(archivePath, dir, assetName) {
   const lower = assetName.toLowerCase()
   const zip = lower.endsWith('.zip')
   const attempts = zip
@@ -206,10 +243,18 @@ function unpack(archivePath, dir, assetName) {
 
   const failures = []
   for (const [command, args] of attempts) {
-    const result = spawnSync(command, args, { encoding: 'utf8' })
-    if (result.status === 0) return
-    const detail = result.error?.message || (result.stderr || '').trim() || 'exit ' + result.status
-    failures.push(command + ': ' + detail)
+    try {
+      await new Promise((resolve, reject) => {
+        unpacking = execFile(command, args, (error, _stdout, stderr) => {
+          unpacking = undefined
+          if (error) reject(new Error(stderr.trim() || error.message, { cause: error }))
+          else resolve()
+        })
+      })
+      return
+    } catch (error) {
+      failures.push(command + ': ' + error.message)
+    }
   }
   throw new Error(`cannot unpack ${assetName} (${failures.join('; ')})`)
 }
@@ -235,11 +280,13 @@ async function installArtifact(name) {
   console.error(`unica launcher: fetching ${name} ${entry.artifact.version} for ${wanted}`)
   let digest
   try {
-    digest = await download(entry.descriptor.asset.url, assetPath)
+    const signal = name === 'unica' ? undefined : AbortSignal.timeout(120_000)
+    digest = await download(entry.descriptor.asset.url, assetPath, signal)
   } catch (error) {
     await rm(scratch, { recursive: true, force: true })
     await rm(assetPath, { force: true })
-    throw new Error(`cannot download ${entry.descriptor.asset.url}: ${error.message}. First start needs network; a proxy or a blocked host shows up here.`)
+    const message = `cannot download ${entry.descriptor.asset.url}: ${error.message}. First start needs network; a proxy or a blocked host shows up here.`
+    throw Object.assign(new Error(message, { cause: error }), { transient: error.transient === true })
   }
   if (digest !== entry.descriptor.asset.sha256) {
     await rm(scratch, { recursive: true, force: true })
@@ -255,7 +302,7 @@ async function installArtifact(name) {
     await chmod(destination, 0o755).catch(() => {})
   } else {
     try {
-      unpack(assetPath, scratch, entry.descriptor.asset.name)
+      await unpack(assetPath, scratch, entry.descriptor.asset.name)
     } catch (error) {
       await rm(scratch, { recursive: true, force: true })
       await rm(assetPath, { force: true })
@@ -312,13 +359,21 @@ function missingEngines() {
 
 async function deliverEngines(names) {
   for (const name of names) {
-    try {
-      await installArtifact(name)
-      console.error(`unica launcher: ${name} delivered`)
-    } catch (error) {
-      // A missing engine degrades one capability, it does not stop the server:
-      // every engine-backed call answers `provider_unavailable` on its own.
-      console.error(`unica launcher: ${name} delivery failed: ${error.message}`)
+    for (const waitMs of [250, 750, null]) {
+      try {
+        await installArtifact(name)
+        console.error(`unica launcher: ${name} delivered`)
+        break
+      } catch (error) {
+        if (error.transient && waitMs !== null) {
+          console.error(`unica launcher: retrying ${name} delivery: ${error.message}`)
+          await delay(waitMs)
+          continue
+        }
+        console.error(`unica launcher: ${name} delivery failed: ${error.message}`)
+        notifyHost({ type: 'unica:engine-delivery-failed', name, message: error.message })
+        break
+      }
     }
   }
 }
@@ -470,9 +525,4 @@ child.on('exit', (code, signal) => {
     finish()
   })
 })
-function forwardSignal(signal) {
-  child.kill(signal)
-}
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, forwardSignal)
-}
+child.once('spawn', () => notifyHost({ type: 'unica:runtime-ready' }))

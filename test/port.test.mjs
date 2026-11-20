@@ -89,7 +89,7 @@ test('a background engine HTTP failure leaves the cached core serving', async (t
   child.stderr.setEncoding('utf8').on('data', (chunk) => {
     stderr += chunk
     // Ask the stand-in core to respond only after the failed download.
-    if (!child.stdin.writableEnded && /HTTP 503/.test(stderr)) child.stdin.end('console.log("core answered")\n')
+    if (!child.stdin.writableEnded && /v8-runner delivery failed: .*HTTP 503/.test(stderr)) child.stdin.end('console.log("core answered")\n')
   })
   child.stdin.on('error', (error) => { if (error.code !== 'EPIPE') throw error })
   const [code] = await once(child, 'close')

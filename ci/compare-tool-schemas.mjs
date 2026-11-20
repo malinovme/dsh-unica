@@ -9,7 +9,8 @@ async function catalog(pluginRoot) {
   const config = resolveConfig({ pluginRoot, nodePath: process.execPath, artifactDelivery: 'off' })
   const proc = new UnicaProc({ cwd: realpathSync(tmpdir()), config })
   try {
-    await proc.start()
+    // Older unpacked releases expose MCP over stdio without the launcher readiness message.
+    await proc.start(undefined, { legacyLauncher: true })
     const schemas = new Map()
     const cursors = new Set()
     let cursor

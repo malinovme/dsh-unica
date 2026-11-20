@@ -51,6 +51,7 @@ export class ProcPool {
     } finally {
       entry.busy -= 1
       entry.lastUsed = Date.now()
+      this.#makeRoom(this.config.maxProcesses)
     }
   }
 
@@ -101,6 +102,8 @@ export class ProcPool {
       entry.lastUsed = Date.now()
       this.#entries.set(cwd, entry)
       this.log?.info?.(`unica-native: started unica in ${cwd}`)
+      // All callers may have cancelled before initialize finished.
+      if (entry.busy === 0) this.#makeRoom(this.config.maxProcesses)
     } catch (error) {
       proc.close('unica process failed to start')
       if (!this.#closed) this.log?.error?.(`unica-native: failed to start unica in ${cwd}: ${error.message}`)
@@ -108,9 +111,9 @@ export class ProcPool {
     }
   }
 
-  /** Evict idle processes until there is room for one more. */
-  #makeRoom() {
-    while (this.#entries.size >= this.config.maxProcesses) {
+  /** Evict idle processes in least-recently-used order until the requested limit is met. */
+  #makeRoom(limit = this.config.maxProcesses - 1) {
+    while (this.#entries.size > limit) {
       const victim = [...this.#entries.entries()]
         .filter(([, entry]) => entry.busy === 0)
         .sort(([, a], [, b]) => a.lastUsed - b.lastUsed)[0]

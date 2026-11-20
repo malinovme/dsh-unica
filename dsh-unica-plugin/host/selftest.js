@@ -22,8 +22,10 @@ if (cwd === undefined) {
 }
 
 const startupTimeout = flag('--startup-timeout-ms')
+const coldStartTimeout = flag('--cold-start-timeout-ms')
 const config = resolveConfig({
   defaultCwd: cwd,
+  coldStartTimeoutMs: coldStartTimeout === undefined ? undefined : Number(coldStartTimeout),
   startupTimeoutMs: startupTimeout === undefined ? undefined : Number(startupTimeout),
 })
 const proc = new UnicaProc({ cwd, config, log: { info() {}, warn: console.error, error: console.error } })
