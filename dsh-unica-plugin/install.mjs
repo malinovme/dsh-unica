@@ -185,7 +185,8 @@ function nativeSelftest(cache) {
   if (budget === COLD_TIMEOUT_MS) {
     console.log(`  runtime       : not cached yet — downloading and verifying it first, this can take minutes`)
   }
-  const args = [join(PLUGIN_ROOT, 'host', 'selftest.js'), '--cwd', VERIFY_CWD, '--startup-timeout-ms', String(budget)]
+  const args = [join(PLUGIN_ROOT, 'host', 'selftest.js'), '--cwd', VERIFY_CWD,
+    '--startup-timeout-ms', String(SMOKE_TIMEOUT_MS), '--cold-start-timeout-ms', String(budget)]
   return new Promise((resolve) => {
     const child = spawn(process.execPath, args, {
       env: {

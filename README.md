@@ -89,7 +89,7 @@ irm https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.ps1 | iex
 `-Version`):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | UNICA_VERSION=v0.15.0.10 sh
+curl -fsSL https://raw.githubusercontent.com/malinovme/dsh-unica/main/install.sh | UNICA_VERSION=vX.Y.Z.N sh
 ```
 
 Скрипт сам выбирает профиль (`desktop`, если он есть, иначе `web`), а если
@@ -244,8 +244,7 @@ unica.view  ->  mcp__unica__unica_view_6f3a42290cc8
 **Каталог на каждый вызов.** У инструмента есть `execute(args, exec)`, и `exec`
 несёт агента: мост спрашивает у `ctx.workingDirectory.ensure(exec.agent)` текущий
 каталог сессии и берёт процесс unica из пула по этому каталогу. Процесс
-стартует лениво, живёт `idleMs` и вытесняется по LRU; смена каталога в сессии
-сама переключает проект — перезапуск DSH не нужен.
+запускается по первому вызову. После всплеска параллельных вызовов пул возвращается к `maxProcesses`, завершая наименее недавно использованные свободные процессы. Смена каталога в сессии переключает проект.
 
 **Слой запуска.** Лаунчер на Node.js (`bootstrap/launch.mjs`) читает манифест ядра и движков `bsl-analyzer` и `v8-runner`. Для каждого артефакта используется отдельный каталог кэша.
 
@@ -253,7 +252,7 @@ unica.view  ->  mcp__unica__unica_view_6f3a42290cc8
 <cache>/<artifact>/<version>--<asset sha256>/<target>/
 ```
 
-Лаунчер проверяет SHA-256 архива и файлов, записывает маркер `.ready.json` во временный каталог и публикует готовый каталог переименованием.
+Лаунчер проверяет SHA-256 архива и файлов, записывает маркер `.ready.json` во временный каталог и публикует готовый каталог переименованием. Мост по умолчанию даёт 5 минут на подготовку ядра (`coldStartTimeoutMs`) и 30 секунд на MCP `initialize` после старта ядра (`startupTimeoutMs`).
 
 **Раскладку нельзя угадать.** Unica ищет движки не рядом с собой, а в кэше
 артефактов, и узнаёт о нём из `UNICA_ARTIFACT_CACHE` — лаунчер выставляет её
@@ -284,7 +283,7 @@ tools/build-runtime-manifest.mjs` собирает его из `third-party/tool
 | `UNICA_LAUNCH_SELFTEST_COMMAND=<json argv>` | тестовый хук: подменить рантайм |
 
 По умолчанию лаунчер запускает ядро и в фоне скачивает отсутствующие в кэше
-движки в порядке `v8-runner`, затем `bsl-analyzer`. Если инструмент
+движки в порядке `v8-runner`, затем `bsl-analyzer`. После временной сетевой ошибки лаунчер выполняет до двух повторов. Если доставить движок не удалось, в журнале DSH указываются имя движка и причина. Если инструмент
 сообщил, что нужный движок ещё недоступен, дождитесь строки
 `unica launcher: <engine> delivered` в журнале сервера и повторите вызов.
 

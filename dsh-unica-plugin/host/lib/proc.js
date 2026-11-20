@@ -18,6 +18,7 @@ export class UnicaProc {
   #stderr = []
   #closing = false
   #closed = false
+  #finishPreparation
 
   constructor({ cwd, config, log }) {
     this.cwd = cwd
@@ -26,10 +27,11 @@ export class UnicaProc {
   }
 
   get alive() {
-    return this.#child !== undefined && this.#child.exitCode === null && !this.#closed
+    return this.#child !== undefined && this.#child.exitCode === null && !this.#closed && !this.#closing
   }
 
-  async start(signal) {
+  async start(signal, { legacyLauncher = false } = {}) {
+    signal?.throwIfAborted()
     const launcher = join(this.config.pluginRoot, 'bootstrap', 'launch.mjs')
     const env = {
       ...process.env,
@@ -43,7 +45,7 @@ export class UnicaProc {
     this.#child = spawn(this.config.nodePath, [launcher, this.config.pluginRoot], {
       cwd: this.cwd,
       env,
-      stdio: process.platform === 'win32' ? ['pipe', 'pipe', 'pipe', 'ipc'] : ['pipe', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     })
 
     this.#child.stdout.setEncoding('utf8')
@@ -54,20 +56,50 @@ export class UnicaProc {
       this.#stderr.push(chunk)
       if (this.#stderr.length > 50) this.#stderr.shift()
     })
+    this.#child.on('message', (message) => {
+      if (message?.type === 'unica:runtime-ready') this.#finishPreparation?.()
+      if (message?.type === 'unica:engine-delivery-failed' && !this.#closing) {
+        this.log?.warn?.(`unica-native: ${message.name} delivery failed: ${message.message}`)
+      }
+    })
     this.#child.on('error', (error) => this.#failAll(error))
     this.#child.on('exit', (code, signal) => {
       this.#closed = true
       this.#failAll(new Error(`unica process exited (code=${code}, signal=${signal})`))
     })
 
-    const result = await this.request(
-      'initialize',
-      { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: CLIENT_INFO },
-      { signal, timeoutMs: this.config.startupTimeoutMs },
-    )
-    this.notify('notifications/initialized', {})
-    this.serverInfo = result?.serverInfo
-    return result
+    try {
+      if (!legacyLauncher) await this.#waitForRuntime(signal)
+      const result = await this.request(
+        'initialize',
+        { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: CLIENT_INFO },
+        { signal, timeoutMs: legacyLauncher ? this.config.coldStartTimeoutMs : this.config.startupTimeoutMs },
+      )
+      this.notify('notifications/initialized', {})
+      this.serverInfo = result?.serverInfo
+      return result
+    } catch (error) {
+      this.close('unica startup failed')
+      throw error
+    }
+  }
+
+  #waitForRuntime(signal) {
+    return new Promise((resolve, reject) => {
+      const timeoutMs = this.config.coldStartTimeoutMs
+      const abort = () => this.#finishPreparation?.(signal.reason)
+      const timer = setTimeout(() => {
+        this.#finishPreparation?.(new Error(`unica runtime preparation timed out after ${timeoutMs} ms`))
+      }, timeoutMs)
+      this.#finishPreparation = (error) => {
+        this.#finishPreparation = undefined
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', abort)
+        if (error) reject(error)
+        else resolve()
+      }
+      signal?.addEventListener('abort', abort, { once: true })
+    })
   }
 
   async listTools(options) {
@@ -151,7 +183,7 @@ export class UnicaProc {
       if (killed.status === 0) return
     }
     // On Windows the launcher must terminate its own server, leaving the shared daemon alive.
-    if (child.connected) child.disconnect()
+    if (process.platform === 'win32' && child.connected) child.disconnect()
     else child.kill('SIGTERM')
     const killTimer = setTimeout(() => {
       if (child.exitCode === null) child.kill('SIGKILL')
@@ -199,6 +231,7 @@ export class UnicaProc {
   }
 
   #failAll(error) {
+    this.#finishPreparation?.(error)
     const pending = [...this.#pending.values()]
     this.#pending.clear()
     for (const call of pending) call.reject(error)

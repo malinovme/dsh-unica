@@ -51,6 +51,7 @@ export class ProcPool {
     } finally {
       entry.busy -= 1
       entry.lastUsed = Date.now()
+      this.#makeRoom(this.config.maxProcesses)
     }
   }
 
@@ -108,9 +109,9 @@ export class ProcPool {
     }
   }
 
-  /** Evict idle processes until there is room for one more. */
-  #makeRoom() {
-    while (this.#entries.size >= this.config.maxProcesses) {
+  /** Evict idle processes in least-recently-used order until the requested limit is met. */
+  #makeRoom(limit = this.config.maxProcesses - 1) {
+    while (this.#entries.size > limit) {
       const victim = [...this.#entries.entries()]
         .filter(([, entry]) => entry.busy === 0)
         .sort(([, a], [, b]) => a.lastUsed - b.lastUsed)[0]
