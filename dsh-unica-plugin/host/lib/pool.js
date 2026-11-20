@@ -102,6 +102,8 @@ export class ProcPool {
       entry.lastUsed = Date.now()
       this.#entries.set(cwd, entry)
       this.log?.info?.(`unica-native: started unica in ${cwd}`)
+      // All callers may have cancelled before initialize finished.
+      if (entry.busy === 0) this.#makeRoom(this.config.maxProcesses)
     } catch (error) {
       proc.close('unica process failed to start')
       if (!this.#closed) this.log?.error?.(`unica-native: failed to start unica in ${cwd}: ${error.message}`)

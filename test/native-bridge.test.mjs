@@ -122,6 +122,35 @@ test('excess workers are closed after concurrent calls settle', async (t) => {
   }
 })
 
+test('workers that initialize after all waiting calls cancel still respect the pool limit', async (t) => {
+  const { root, config, cleanups } = await setup(t)
+  const dirs = ['first', 'second'].map(name => join(root, name))
+  const gates = dirs.map(dir => join(dir, 'hold-initialize'))
+  const markers = dirs.map(dir => join(dir, 'initialize-started'))
+  await Promise.all(dirs.map(dir => mkdir(dir)))
+  await Promise.all(gates.map(gate => writeFile(gate, '')))
+  const pool = new ProcPool({ ...config, maxProcesses: 1 })
+  cleanups.push(() => pool.closeAll())
+  const controller = new AbortController()
+  const tool = t.mock.fn()
+  const calls = dirs.map(dir => assert.rejects(pool.withProc(dir, tool, controller.signal), { name: 'AbortError' }))
+  try {
+    await waitFor(() => markers.every(marker => existsSync(marker)), 'both initialize requests')
+    controller.abort()
+    await Promise.all(calls)
+    assert.equal(tool.mock.callCount(), 0)
+    const pids = await Promise.all(markers.map(async marker => Number(await readFile(marker, 'utf8'))))
+    await Promise.all(gates.map(gate => rm(gate)))
+    await waitFor(() => pids.some(pid => {
+      try { process.kill(pid, 0); return false }
+      catch (error) { if (error.code === 'ESRCH') return true; throw error }
+    }), 'one unreserved worker to exit after initialize')
+  } finally {
+    controller.abort()
+    await Promise.allSettled(calls)
+  }
+})
+
 test('cancelling a caller during initialize leaves the shared startup available to its peer', async (t) => {
   const { root, config, cleanups } = await setup(t)
   const cwd = join(root, 'project')
