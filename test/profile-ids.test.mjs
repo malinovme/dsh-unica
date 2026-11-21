@@ -26,7 +26,8 @@ for (const [style, eol, quote] of [['LF', '\n', "'"], ['CRLF', '\r\n', '"']]) {
     ].join(eol)
     const id = '    - id: unica-native'
     const initial = (await readFile(path, 'utf8')).split(/\r?\n/).join(eol)
-    const customized = initial.replace(id + eol, userRows + eol + '    - id: ' + quote + 'unica-native' + quote + '  # project bridge' + eol)
+    const header = '- insert:  # local project'
+    const customized = initial.replace('- insert:', header).replace(id + eol, userRows + eol + '    - id: ' + quote + 'unica-native' + quote + '  # project bridge' + eol)
     assert.notEqual(customized, initial)
     await writeFile(path, customized)
     install('--dry-run')
@@ -35,7 +36,7 @@ for (const [style, eol, quote] of [['LF', '\n', "'"], ['CRLF', '\r\n', '"']]) {
     const updated = await readFile(path, 'utf8')
     assert.match(updated, /^    - id: unica-native +# project bridge\r?$/m)
     assert.equal(updated.match(/^    - id: ['"]?unica-native['"]?\b/gm)?.length, 1)
-    assert.ok(updated.includes(userRows + eol))
+    assert.ok(updated.includes(header + eol + userRows + eol))
     assert.equal(updated.includes('\r\n'), style === 'CRLF')
     if (style === 'CRLF') assert.doesNotMatch(updated, /(?<!\r)\n/)
     install()
@@ -70,5 +71,14 @@ test('migration removes all quoted top-level duplicates and retired ids', () => 
   assert.match(content, /^# retired annotation$/m)
   assert.doesNotMatch(content, /old-[12]|name: retired|id: ['"]?mcp-unica|Literal text/)
   assert.ok(content.includes('    - id: unica-native#different\n      instructions: |\n        Text with trailing spaces  \n'))
+  assert.equal(editProfilePatch(content, edit).content, content)
+})
+
+test('removing the last child of a commented insert preserves its comment without an empty insert', () => {
+  const raw = '- insert: # keep this explanation\n    - id: unica-native\n      name: old\n'
+  const edit = { block: '- id: unica-native\n  name: new' }
+  const { content } = editProfilePatch(raw, edit)
+  assert.equal(content.match(/^- insert:/gm)?.length, 1)
+  assert.match(content, /^# keep this explanation$/m)
   assert.equal(editProfilePatch(content, edit).content, content)
 })

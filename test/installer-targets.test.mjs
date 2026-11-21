@@ -79,3 +79,46 @@ for (const existing of [false, true]) {
     assert.match(await readFile(second, 'utf8'), /- id: preset-unica-1c/)
   })
 }
+
+const standardPreset = [
+  '- insert:', '    - id: preset-standard', '      config:', '        plugins:',
+  '          - id: persona', '            config:', '              suffix: Your working directory is {{cwd}}.',
+]
+
+test('a failed native verification leaves both manual installation targets untouched', async t => {
+  const home = await tempHome(t)
+  const first = join(home, 'profiles/headless/cordis.patch.yml')
+  const second = join(home, 'profiles/web/cordis.patch.yml')
+  const original = Buffer.from('# User settings\r\n')
+  await mkdir(dirname(first), { recursive: true })
+  await writeFile(first, original)
+  const standard = join(home, 'standard.yml')
+  await writeFile(standard, standardPreset.join('\n'))
+  // A regular file as the working directory makes the self-test fail before any network access.
+  const result = spawnSync(process.execPath, [installer, '--dsh-home', home, '--target', 'both',
+    '--standard', standard, '--verify', '--verify-cwd', standard], { encoding: 'utf8' })
+  assert.equal(result.status, 1, result.stdout + result.stderr)
+  assert.match(result.stdout + result.stderr, /not a directory/i)
+  assert.deepEqual(await readFile(first), original)
+  assert.equal(existsSync(second), false)
+})
+
+test('LF and CRLF standard templates install the same preset without modifying the template', async t => {
+  const home = await tempHome(t)
+  const profile = join(home, 'profiles/web/cordis.patch.yml')
+  const standard = join(home, 'standard.yml')
+  let first
+  for (const eol of ['\n', '\r\n']) {
+    const source = standardPreset.join(eol) + eol
+    await writeFile(standard, source)
+    const result = spawnSync(process.execPath, [installer, '--dsh-home', home, '--target', 'preset',
+      '--standard', standard], { encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stdout + result.stderr)
+    const installed = await readFile(profile, 'utf8')
+    assert.match(installed, /Unica rules for this session/)
+    if (first !== undefined) assert.equal(installed, first)
+    first = installed
+    assert.equal(await readFile(standard, 'utf8'), source)
+    await rm(profile)
+  }
+})

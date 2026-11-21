@@ -538,7 +538,7 @@ function standardTemplate() {
  * the composition.
  */
 function templateRows(templateText) {
-  const lines = templateText.split('\n')
+  const lines = templateText.split(/\r?\n/)
   const from = lines.findIndex((line) => /^- insert:$/.test(line))
   if (from === -1) throw new Error('the standard composition no longer starts with a top-level `- insert:` payload')
   const payload = []
@@ -564,7 +564,7 @@ function templateRows(templateText) {
   return `${rows}\n`
 }
 
-async function applyProfile() {
+function planProfile() {
   const updates = new Map()
   function add(profile, label, block) {
     const path = join(DSH_HOME, 'profiles', profile, 'cordis.patch.yml')
@@ -579,6 +579,10 @@ async function applyProfile() {
     add(PRESET_PROFILE, 'agent preset', presetRow(templateRows(template.text)))
   }
 
+  return { updates, template }
+}
+
+async function applyProfile({ updates, template }) {
   const summary = []
   for (const [path, reports] of await updateProfileFiles(updates, { dryRun: DRY_RUN })) {
     for (const { label, ids, notes } of reports) {
@@ -595,7 +599,7 @@ async function main() {
   if (skillsCount === 0) throw new Error(`no bundled skills found at ${SKILLS} — run build-skills.mjs first`)
   if (!existsSync(LAUNCH.exe)) throw new Error(`unica bootstrap for ${LAUNCH.platform}/${LAUNCH.arch} not found at ${LAUNCH.exe}`)
 
-  let installation = await applyProfile()
+  let plan = planProfile()
 
   // `--verify` is what turns "the files were written" into "the tools work".
   // Only the self-test proves the last one, and a refused cache directory is the
@@ -614,12 +618,19 @@ async function main() {
       verified = await nativeSelftest(fallback)
       if (verified.ok) {
         CACHE = fallback
-        installation = await applyProfile()
+        plan = planProfile()
         relocated = true
       }
     }
+    if (!verified.ok) {
+      const reason = verified.stderr.trim().split('\n').at(-1) || `self-test exited with code ${verified.code ?? 'unknown'}`
+      console.log(`  native check  : FAIL    ${reason}`)
+      process.exitCode = 1
+      return
+    }
   }
 
+  const installation = await applyProfile(plan)
   console.log(`${DRY_RUN ? '[dry-run] would install' : 'installed'} unica into ${DSH_HOME} (target: ${TARGET})`)
   console.log(`  plugin root   : ${PLUGIN_ROOT}`)
   console.log(`  launch        : ${LAUNCH.kind} — ${LAUNCH.command} ${LAUNCH.args.map((a) => `'${a}'`).join(' ')}`)
@@ -647,41 +658,26 @@ async function main() {
   }
 
   console.log('  native check  :')
-  if (verified.ok) {
+  console.log(
+    `    ok      serverInfo ${verified.server?.name ?? '?'} ${verified.server?.version ?? '?'}, ${verified.tools} tools in ${verified.ms} ms` +
+      `${verified.root === undefined ? '' : `, workspace ${verified.root}`}`,
+  )
+  if (verified.workspace === 'not reported') {
     console.log(
-      `    ok      serverInfo ${verified.server?.name ?? '?'} ${verified.server?.version ?? '?'}, ${verified.tools} tools in ${verified.ms} ms` +
-        `${verified.root === undefined ? '' : `, workspace ${verified.root}`}`,
+      `    note    unica did not adopt ${VERIFY_CWD} as a workspace, so it reported no root.\n` +
+        `            The tool catalog is what this check asks for, and all ${verified.tools} tools answered.`,
     )
-    if (verified.workspace === 'not reported') {
-      console.log(
-        `    note    unica did not adopt ${VERIFY_CWD} as a workspace, so it reported no root.\n` +
-          `            The tool catalog is what this check asks for, and all ${verified.tools} tools answered.`,
-      )
-    }
-    if (relocated) {
-      console.log(
-        `    note    the default cache location refused the bootstrap, so this install uses ${dirname(CACHE.runtimes)}.\n` +
-          `            That is a directory-permission problem on this machine, not a problem with the port.`,
-      )
-    }
-    console.log(
-      `\nStart a NEW session on the preset "Unica 1C" — after restarting the DSH server, which composes\n` +
-        `the preset roster when it loads the profile.`,
-    )
-    return
   }
-
-  const reason = verified.stderr.trim().split('\n').at(-1) ?? ''
+  if (relocated) {
+    console.log(
+      `    note    the default cache location refused the bootstrap, so this install uses ${dirname(CACHE.runtimes)}.\n` +
+        `            That is a directory-permission problem on this machine, not a problem with the port.`,
+    )
+  }
   console.log(
-    `    FAIL    ${reason || `self-test exited with code ${verified.code ?? 'unknown'} without a diagnostic`}`,
+    `\nStart a NEW session on the preset "Unica 1C" — after restarting the DSH server, which composes\n` +
+      `the preset roster when it loads the profile.`,
   )
-  console.log(
-    `\nThe profile was still patched, and DSH will report the preset as failed to load until this is\n` +
-      `fixed — the picker hides such presets, so it would look like the install did nothing.\n` +
-      `If the cause is a cold cache, the first download simply needs longer: run again, and the runtime\n` +
-      `is kept. Otherwise check the cache directory: node tools/verify-install.mjs "${DSH_HOME}" ${PRESET_PROFILE}`,
-  )
-  process.exitCode = 1
 }
 
 await main()

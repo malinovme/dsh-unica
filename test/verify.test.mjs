@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -72,8 +72,8 @@ test('an invalid verify cwd does not relocate the selected cache', (t) => {
     '--cache-dir', cache, '--verify', '--verify-cwd', join(home, 'missing')])
   assert.equal(result.status, 1)
   assert.match(result.stdout, /not a directory/)
-  const rows = loadYaml([]).load(readFileSync(join(home, 'profiles/headless/cordis.patch.yml'), 'utf8'))[0].insert
-  assert.equal(rows[0].config.runtimeCacheDir, join(cache, 'runtimes'))
+  assert.doesNotMatch(result.stdout, /testing .*runtimes/)
+  assert.equal(existsSync(join(home, 'profiles/headless/cordis.patch.yml')), false)
 })
 
 test('relocation commits the fallback only after a successful retry', (t) => {
@@ -86,9 +86,13 @@ test('relocation commits the fallback only after a successful retry', (t) => {
       FIXTURE_REFUSED_CACHE: join(home, 'unica/runtimes'), FIXTURE_RETRY: retry,
     })
     assert.equal(result.status, retry === 'ok' ? 0 : 1, result.stdout + result.stderr)
-    const expected = retry === 'ok' ? join(dir, '.unica-cache/runtimes') : join(home, 'unica/runtimes')
-    const rows = loadYaml([]).load(readFileSync(join(home, 'profiles/headless/cordis.patch.yml'), 'utf8'))[0].insert
-    assert.equal(rows[0].config.runtimeCacheDir, expected)
+    const patch = join(home, 'profiles/headless/cordis.patch.yml')
+    if (retry === 'refused') {
+      assert.equal(existsSync(patch), false)
+    } else {
+      const rows = loadYaml([]).load(readFileSync(patch, 'utf8'))[0].insert
+      assert.equal(rows[0].config.runtimeCacheDir, join(dir, '.unica-cache/runtimes'))
+    }
   }
 })
 
