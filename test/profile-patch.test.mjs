@@ -29,18 +29,28 @@ test('migration retains user comments, !!js expressions and CRLF on successive e
   assert.equal(editProfilePatch(content, edit).content, content)
 })
 
-test('replacing a profile preserves its mode and readers of the previous version', async (t) => {
-  const path = join(await directory(t), 'cordis.patch.yml')
+test('replacing a profile preserves its mode and the data held by an open reader', async (t) => {
+  const dir = await directory(t)
+  const path = join(dir, 'cordis.patch.yml')
   const original = '- id: mine\n  name: kept\n'
   await fs.writeFile(path, original, { mode: 0o600 })
   const mode = (await fs.stat(path)).mode
   const reader = await fs.open(path)
+  let blockedByReader = false
   try {
-    await updateProfileFile(path, [edit])
+    try {
+      await updateProfileFile(path, [edit])
+    } catch (error) {
+      if (process.platform !== 'win32' || error.code !== 'EPERM' || error.syscall !== 'rename') throw error
+      assert.equal(await fs.readFile(path, 'utf8'), original)
+      assert.deepEqual(await fs.readdir(dir), ['cordis.patch.yml'])
+      blockedByReader = true
+    }
     assert.equal(await reader.readFile('utf8'), original)
   } finally {
     await reader.close()
   }
+  if (blockedByReader) await updateProfileFile(path, [edit])
   assert.equal(await fs.readFile(path, 'utf8'), editProfilePatch(original, edit).content)
   const installed = await fs.stat(path)
   assert.equal(installed.mode, mode)
