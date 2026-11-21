@@ -316,6 +316,36 @@ async function waitForProcessExit(pid) {
   }, `process ${pid} to exit`)
 }
 
+test('closing a Unix worker reaps a stubborn server and leaves its daemon and peer alive', {
+  skip: process.platform === 'win32' && 'Windows terminates the runtime through IPC',
+}, async (t) => {
+  const { root, config } = await setup(t)
+  const other = join(root, 'other')
+  await mkdir(other)
+  const worker = new UnicaProc({ cwd: root, config })
+  const peer = new UnicaProc({ cwd: other, config })
+  const cleanup = new Set()
+  try {
+    await Promise.all([worker.start(), peer.start()])
+    const { pid, launcherPid, daemonPid } = await worker.callTool('hold-shutdown', {})
+    cleanup.add(pid)
+    cleanup.add(daemonPid)
+    worker.close()
+    await Promise.all([pid, launcherPid].map(waitForProcessExit))
+    cleanup.delete(pid)
+    assert.ok(existsSync(join(root, 'sigterm-received')), 'give the server a chance to exit gracefully')
+    assert.doesNotThrow(() => process.kill(daemonPid, 0))
+    assert.deepEqual(await peer.listTools(), [{ name: 'unica.view' }])
+  } finally {
+    worker.close()
+    peer.close()
+    for (const pid of cleanup) {
+      try { process.kill(pid, 'SIGKILL') }
+      catch (error) { if (error.code !== 'ESRCH') throw error }
+    }
+  }
+})
+
 test('closeAll during initialize stops the worker and rejects every waiting call', async (t) => {
   const { root, config } = await setup(t)
   const gate = join(root, 'hold-initialize')
