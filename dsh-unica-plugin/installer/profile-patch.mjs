@@ -29,6 +29,77 @@ function idRow(line, indent, id) {
   return { comment: value[4] }
 }
 
+// Walk only direct children of a block. Deeper lines can contain arbitrary
+// YAML, including persona text that happens to look like a bridge row.
+function children(lines, parent) {
+  if (parent === undefined) return []
+  const width = indentWidth(lines[parent])
+  const result = []
+  let childWidth
+  for (let i = parent + 1; i < lines.length; i++) {
+    const trimmed = lines[i].trimStart()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const indent = indentWidth(lines[i])
+    if (indent <= width) break
+    childWidth ??= indent
+    if (indent === childWidth) result.push(i)
+  }
+  return result
+}
+
+function nativeConfig(lines, id) {
+  function field(parent, key) {
+    return children(lines, parent).find(i => lines[i].trim().replace(/\s+#.*$/, '') === key + ':')
+  }
+  if (id === 'unica-native') return field(0, 'config')
+  if (id === 'preset-unica-1c') {
+    const plugins = field(field(0, 'config'), 'plugins')
+    const bridge = children(lines, plugins).find(i => idRow(lines[i].trimStart(), '', 'unica-native'))
+    return field(bridge, 'config')
+  }
+}
+
+// Only generated paths belong to the installer. Carry the user's other
+// bridge options as source text, without parsing or evaluating !!js.
+const USER_OPTIONS = new Set([
+  'maxProcesses', 'idleMs', 'coldStartTimeoutMs', 'startupTimeoutMs', 'toolCallTimeoutMs',
+  'serverName', 'nodePath', 'artifactDelivery', 'probeCwd', 'defaultCwd',
+])
+
+function optionKey(line) {
+  const key = line.trimStart().match(/^(?:'([^']+)'|"([^"]+)"|(\w+))\s*:(?:\s|$)/)
+  return key && (key[1] ?? key[2] ?? key[3])
+}
+
+function preserveBridgeOptions(generated, previous, id) {
+  if (!previous || (id !== 'unica-native' && id !== 'preset-unica-1c')) return generated
+  const saved = new Map()
+  for (const i of children(previous, nativeConfig(previous, id))) {
+    const key = optionKey(previous[i])
+    if (!USER_OPTIONS.has(key)) continue
+    const width = indentWidth(previous[i])
+    let end = i + 1
+    while (end < previous.length && (!previous[end].trim() || indentWidth(previous[end]) > width)) end++
+    while (end > i + 1 && !previous[end - 1].trim()) end--
+    saved.set(key, previous.slice(i, end).map(line => line.slice(width)).join('\n'))
+  }
+  if (!saved.size) return generated
+
+  const lines = generated.split('\n')
+  const fields = children(lines, nativeConfig(lines, id))
+  if (!fields.length) return generated
+  const indent = ' '.repeat(indentWidth(lines[fields[0]]))
+  for (const i of fields) {
+    const key = optionKey(lines[i])
+    if (saved.has(key)) {
+      lines[i] = indentBlock(saved.get(key), indent)
+      saved.delete(key)
+    }
+  }
+  lines.splice(fields.at(-1) + 1, 0, ...Array.from(saved.values(), value => indentBlock(value, indent)))
+  return lines.join('\n')
+}
+
 // Carry the annotation on a managed id to its replacement. Preserve extra
 // annotations from old duplicates, or from retired ids, at their source.
 function retainComment(match, indent, annotation) {
@@ -58,6 +129,7 @@ function removeTopLevelEntries(text, id, annotation) {
     let end = findEntryEnd(lines, i)
     // A section comment immediately before the next row belongs to that row.
     while (end > i + 1 && (lines[end - 1].trim() === '' || lines[end - 1].startsWith('#'))) end--
+    if (annotation) annotation.previous ??= lines.slice(i, end)
     kept.push(...retainComment(match, '', annotation))
     i = end - 1
     removed = true
@@ -111,6 +183,7 @@ function removeInsertChild(text, id, annotation) {
     for (let j = 0; j < payload.length; j += 1) {
       const match = width > 0 && idRow(payload[j], indent, id)
       if (match) {
+        const start = j
         kept.push(...retainComment(match, indent, annotation))
         // Indented content can include literal lines starting with '#'.
         // Keep section comments at the sequence indentation for the next row.
@@ -123,6 +196,7 @@ function removeInsertChild(text, id, annotation) {
           }
           j = next
         }
+        if (annotation) annotation.previous ??= payload.slice(start, j + 1)
         removed += 1
         continue
       }
@@ -214,6 +288,7 @@ export function editProfilePatch(raw, { banner = '', block, legacyIds = [] }) {
       text = deduped
       notes.push(`${id}: replaced a top-level entry, which a patch cannot declare`)
     }
+    rows[i] = preserveBridgeOptions(rows[i], annotation.previous, id)
     if (annotation.comment) rows[i] = rows[i].replace(/^[^\n]+/, line => line + '  ' + annotation.comment)
   }
 

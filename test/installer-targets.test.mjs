@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -121,4 +121,58 @@ test('LF and CRLF standard templates install the same preset without modifying t
     assert.equal(await readFile(standard, 'utf8'), source)
     await rm(profile)
   }
+})
+
+test('reinstall from a new plugin root retains distinct host and preset bridge settings', async t => {
+  const home = await tempHome(t)
+  const profile = join(home, 'profiles', 'shared', 'cordis.patch.yml')
+  const standard = join(home, 'standard.yml')
+  await writeFile(standard, [
+    '- insert:', '    - id: preset-standard', '      config:', '        plugins:',
+    '          - id: persona', '            config:', '              suffix: Your working directory is {{cwd}}.',
+  ].join('\n'))
+  const args = ['--target', 'both', '--profile', 'shared', '--dsh-home', home, '--standard', standard]
+  const install = (script, cache) => {
+    const run = spawnSync(process.execPath, [script, ...args, '--cache-dir', cache], { encoding: 'utf8' })
+    assert.equal(run.status, 0, run.stderr)
+  }
+  const oldCache = join(home, 'old-cache')
+  install(installer, oldCache)
+  const initial = await readFile(profile, 'utf8')
+  const settings = []
+  const customized = initial.replace(/^( +)maxProcesses: 4$/gm, (_, indent) => {
+    const n = settings.length + 1
+    const block = [
+      indent + 'maxProcesses: ' + n + '  # local limit',
+      indent + 'coldStartTimeoutMs: ' + n * 15000,
+      indent + 'startupTimeoutMs: ' + n * 10000,
+      indent + 'artifactDelivery: off',
+      indent + 'nodePath: !!js >-',
+      indent + '  process.execPath',
+    ].join('\n')
+    settings.push(block)
+    return block
+  }).replace(/toolCallTimeoutMs: 600000/g, 'toolCallTimeoutMs: 45321')
+    .replace(/idleMs: 600000/g, 'idleMs: 12345')
+  assert.equal(settings.length, 2)
+  await writeFile(profile, customized)
+  const movedRoot = join(home, 'new-plugin')
+  const newCache = join(home, 'new-cache')
+  await cp(dirname(installer), movedRoot, { recursive: true })
+  const movedInstaller = join(movedRoot, 'install.mjs')
+  install(movedInstaller, newCache)
+  const updated = await readFile(profile, 'utf8')
+  for (const block of settings) {
+    for (const line of block.split('\n')) assert.ok(updated.split('\n').includes(line), line)
+  }
+  assert.equal(updated.match(/toolCallTimeoutMs: 45321/g)?.length, 2)
+  assert.equal(updated.match(/idleMs: 12345/g)?.length, 2)
+  for (const field of ['pluginRoot: ' + JSON.stringify(movedRoot),
+    'runtimeCacheDir: ' + JSON.stringify(join(newCache, 'runtimes')),
+    'providerStateDir: ' + JSON.stringify(join(newCache, 'provider-state')),
+    'name: ' + JSON.stringify(pathToFileURL(join(movedRoot, 'host/index.js')).href)]) {
+    assert.equal(updated.split(field).length - 1, 2, field)
+  }
+  install(movedInstaller, newCache)
+  assert.equal(await readFile(profile, 'utf8'), updated)
 })
