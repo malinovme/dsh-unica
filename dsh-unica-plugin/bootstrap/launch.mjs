@@ -25,8 +25,8 @@
 // looks ready. That is the whole reason for the rename.
 import { createHash } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
-import { constants, createWriteStream, existsSync, statSync } from 'node:fs'
-import { access, chmod, link, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { accessSync, constants, createWriteStream, existsSync, statSync } from 'node:fs'
+import { access, chmod, link, lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { homedir } from 'node:os'
@@ -42,7 +42,7 @@ let child
 let unpacking
 
 function forwardSignal(signal) {
-  if (child) {
+  if (child && child.exitCode === null && child.signalCode === null) {
     child.kill(signal)
   } else {
     unpacking?.kill(signal)
@@ -108,13 +108,30 @@ function artifactAt(name) {
   const descriptor = artifact.targets?.[wanted]
   if (descriptor === undefined) die(`artifact ${name} has no entry for ${wanted}`)
   const dir = join(cacheRoot, name, `${artifact.version}--${descriptor.asset.sha256}`, wanted)
-  return { artifact, descriptor, dir, marker: join(dir, '.ready.json') }
+  return { name, artifact, descriptor, dir, marker: join(dir, '.ready.json') }
 }
 
 // Presence checks are cheap on a warm start. Hashes are checked during delivery.
-function ready(entry) {
+function payloadPresent(entry) {
   return existsSync(entry.marker) && [entry.descriptor.entrypoint, ...(entry.descriptor.files ?? []).map(f => f.path)]
     .filter(Boolean).every(path => statSync(join(entry.dir, path), { throwIfNoEntry: false })?.isFile())
+}
+
+function canExecute(path) {
+  if (process.platform === 'win32') return true
+  try {
+    accessSync(path, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function ready(entry) {
+  // The core has its own permission check immediately before startup.
+  if (!payloadPresent(entry)) return false
+  if (entry.name === 'unica' || !entry.descriptor.entrypoint) return true
+  return canExecute(join(entry.dir, entry.descriptor.entrypoint))
 }
 
 // Repair in place. A hard link publishes a complete verified file atomically
@@ -202,24 +219,17 @@ async function hashFile(path) {
 
 // A restored or copied cache can lose its Unix execute bits. Only grant the
 // owner execute permission after verifying the same open file we will chmod.
-async function ensureCoreExecutable(path, descriptor) {
-  if (process.platform === 'win32') return
-  try {
-    await access(path, constants.X_OK)
-    return
-  } catch (error) {
-    if (error.code !== 'EACCES') throw error
-  }
-  const file = descriptor.files?.find(file => file.path === descriptor.entrypoint && file.executable)
-  if (!file?.sha256) throw new Error(`cannot verify executable permission repair for ${path}`)
+async function restoreExecutePermission(path, expected, name) {
+  if (!expected) throw new Error(`cannot verify executable permission repair for ${path}`)
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
   try {
     const info = await handle.stat()
     if (!info.isFile()) throw new Error(`expected a cached executable file at ${path}`)
     const hash = createHash('sha256')
     for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk)
-    if (hash.digest('hex') !== file.sha256) throw new Error(`cached core checksum mismatch: ${path}`)
+    if (hash.digest('hex') !== expected) throw new Error(`cached ${name} checksum mismatch: ${path}`)
     await handle.chmod((info.mode & 0o777) | 0o100)
+    await access(path, constants.X_OK)
   } finally {
     await handle.close()
   }
@@ -293,6 +303,11 @@ async function unpack(archivePath, dir, assetName) {
 async function installArtifact(name) {
   const entry = artifactAt(name)
   if (ready(entry)) return entry
+  const install = entry.descriptor.install ?? { strategy: 'archive' }
+  if (install.strategy === 'file' && payloadPresent(entry)) {
+    await restoreExecutePermission(join(entry.dir, entry.descriptor.entrypoint), entry.descriptor.asset.sha256, name)
+    return entry
+  }
 
   const assetPath = join(cacheRoot, `.${name}-${process.pid}-${entry.descriptor.asset.name}`)
   const scratch = join(cacheRoot, `.${name}-${process.pid}`)
@@ -318,7 +333,6 @@ async function installArtifact(name) {
     throw new Error(`artifact ${name} checksum mismatch: manifest says ${entry.descriptor.asset.sha256}, got ${digest}`)
   }
 
-  const install = entry.descriptor.install ?? { strategy: 'archive' }
   if (install.strategy === 'file') {
     const destination = join(scratch, install.as ?? entry.descriptor.asset.name)
     await mkdir(dirname(destination), { recursive: true })
@@ -349,6 +363,23 @@ async function installArtifact(name) {
     if (file.executable === true) await chmod(path, 0o755).catch(() => {})
   }
 
+  // A verified archive can itself lack Unix execute bits. Fix the staged
+  // engine before another launcher sees the ready marker.
+  if (name !== 'unica' && entry.descriptor.entrypoint && process.platform !== 'win32') {
+    const executable = join(scratch, entry.descriptor.entrypoint)
+    if (!canExecute(executable)) {
+      try {
+        const info = await lstat(executable)
+        if (!info.isFile()) throw new Error(`expected an executable file in the verified archive at ${executable}`)
+        await chmod(executable, (info.mode & 0o777) | 0o100)
+        await access(executable, constants.X_OK)
+      } catch (error) {
+        await rm(scratch, { recursive: true, force: true })
+        throw error
+      }
+    }
+  }
+
   await writeFile(
     join(scratch, '.ready.json'),
     `${JSON.stringify({ artifact: name, version: entry.artifact.version, target: wanted, assetSha256: entry.descriptor.asset.sha256 }, null, 2)}\n`,
@@ -364,7 +395,13 @@ async function installArtifact(name) {
     try {
       if (!ready(entry)) {
         if (!['EEXIST', 'ENOTEMPTY', 'EPERM', 'EACCES'].includes(error.code) || !existsSync(entry.dir)) throw error
-        await repairArtifact(scratch, entry)
+        if (!payloadPresent(entry)) await repairArtifact(scratch, entry)
+        const entrypoint = entry.descriptor.entrypoint
+        if (name !== 'unica' && entrypoint && !canExecute(join(entry.dir, entrypoint))) {
+          // The manifest pins the archive. Its verified entrypoint supplies
+          // the digest for restoring the existing file's execute permission.
+          await restoreExecutePermission(join(entry.dir, entrypoint), await hashFile(join(scratch, entrypoint)), name)
+        }
       }
     } finally {
       await rm(scratch, { recursive: true, force: true })
@@ -461,30 +498,32 @@ function forwardLine(line) {
   return Buffer.from(`${JSON.stringify(rewritten)}\n`, 'utf8')
 }
 
-/** Wire the client's stdio to the server's, rewriting responses on the way back. */
+/** Yield one response at a time so a slow client backpressures the server. */
+async function* rewriteLines(chunks) {
+  let fragments = []
+  for await (const chunk of chunks) {
+    let start = 0
+    for (let end = chunk.indexOf(0x0a); end !== -1; end = chunk.indexOf(0x0a, start)) {
+      const line = chunk.subarray(start, end)
+      if (fragments.length) {
+        fragments.push(line)
+        yield forwardLine(Buffer.concat(fragments))
+        fragments = []
+      } else {
+        yield forwardLine(line)
+      }
+      start = end + 1
+    }
+    if (start < chunk.length) fragments.push(chunk.subarray(start))
+  }
+  if (fragments.length) yield forwardLine(Buffer.concat(fragments))
+}
+
 function relay(child) {
   process.stdin.on('error', () => {})
   process.stdin.pipe(child.stdin)
   child.stdin.on('error', () => {})
-  child.stdout.on('error', () => {})
-
-  // MCP frames are newline-delimited JSON, but a frame can be split across
-  // chunks or arrive several per chunk, so lines are assembled by hand.
-  let pending = Buffer.alloc(0)
-  child.stdout.on('data', (chunk) => {
-    pending = Buffer.concat([pending, chunk])
-    for (;;) {
-      const newline = pending.indexOf(0x0a)
-      if (newline === -1) break
-      const line = pending.subarray(0, newline)
-      pending = pending.subarray(newline + 1)
-      process.stdout.write(forwardLine(line))
-    }
-  })
-  child.stdout.on('end', () => {
-    if (pending.length > 0) process.stdout.write(forwardLine(pending))
-    pending = Buffer.alloc(0)
-  })
+  return pipeline(child.stdout, rewriteLines, process.stdout)
 }
 
 // Unica takes its workspace from the directory it was started in, and nothing on
@@ -515,7 +554,10 @@ if (selfTesting) {
 } else {
   const coreEntry = await installArtifact('unica').catch((error) => die(error.message))
   command = join(coreEntry.dir, coreEntry.descriptor.entrypoint)
-  await ensureCoreExecutable(command, coreEntry.descriptor).catch(error => die(error.message))
+  if (!canExecute(command)) {
+    const file = coreEntry.descriptor.files?.find(file => file.path === coreEntry.descriptor.entrypoint && file.executable)
+    await restoreExecutePermission(command, file?.sha256, 'core').catch(error => die(error.message))
+  }
 
   // `off` keeps the cache untouched, `eager` blocks the handover until every engine
   // is in place, and the default starts the server at once and delivers behind it:
@@ -536,21 +578,19 @@ if (selfTesting) {
 const childEnv = { ...process.env, UNICA_ARTIFACT_CACHE: cacheRoot }
 
 child = spawn(command, commandArgs, { stdio: TEXT_FALLBACK ? ['pipe', 'pipe', 'inherit'] : 'inherit', env: childEnv })
-if (TEXT_FALLBACK) relay(child)
+const relayed = TEXT_FALLBACK && relay(child).catch((error) => {
+  child.kill('SIGKILL')
+  die(`cannot forward runtime output: ${error.message}`)
+})
 child.on('error', (error) => die(`cannot start ${command}: ${error.message}`))
-child.on('exit', (code, signal) => {
+child.on('exit', async (code, signal) => {
   if (signal !== null) {
     process.off(signal, forwardSignal)
     return process.kill(process.pid, signal)
   }
-  // Drain the last rewritten lines before leaving: a piped stdout is flushed
-  // asynchronously, and a bare exit() here would truncate the final response.
-  const finish = () => process.exit(code ?? 1)
-  const timer = setTimeout(finish, 1000)
-  timer.unref?.()
-  process.stdout.write('', () => {
-    clearTimeout(timer)
-    finish()
-  })
+  // The runtime can exit with its final frame still in either stdout pipe.
+  // Let the client's read rate determine when the successful exit is reported.
+  await relayed
+  process.exit(code ?? 1)
 })
 child.once('spawn', () => notifyHost({ type: 'unica:runtime-ready' }))

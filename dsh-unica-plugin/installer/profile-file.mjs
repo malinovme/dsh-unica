@@ -15,13 +15,15 @@ async function destination(path) {
   try {
     target = await readlink(path)
   } catch (error) {
-    if (error.code === 'ENOENT') return path
+    if (error.code === 'ENOENT' && dirname(path) !== path) {
+      return join(await destination(dirname(path)), basename(path))
+    }
     throw error
   }
   return destination(resolve(dirname(path), target))
 }
 
-async function replaceFile(path, content, mode) {
+async function stageFile(path, content, mode) {
   const temporary = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`)
   const file = await open(temporary, 'wx', mode ?? 0o666)
   try {
@@ -32,38 +34,101 @@ async function replaceFile(path, content, mode) {
     } finally {
       await file.close()
     }
-    await rename(temporary, path)
+    return temporary
   } catch (error) {
     await unlink(temporary)
     throw error
   }
 }
 
-/** Apply all edits for one profile in memory, then publish the complete file once. */
-export async function updateProfileFile(path, edits, { dryRun = false } = {}) {
-  const target = await destination(path)
-  let original = ''
-  let mode
+async function readProfile(path) {
   try {
-    const info = await stat(target)
-    if (!info.isFile()) throw new Error(`expected a regular profile file at ${target}`)
-    mode = info.mode & 0o777
-    original = await readFile(target, 'utf8')
+    const info = await stat(path)
+    if (!info.isFile()) throw new Error(`expected a regular profile file at ${path}`)
+    const original = await readFile(path)
+    return { path, original, content: original.toString('utf8'), mode: info.mode & 0o777 }
   } catch (error) {
     if (error.code !== 'ENOENT') throw error
+    return { path, original: null, content: '' }
   }
+}
 
-  let content = original
-  const reports = []
-  for (const edit of edits) {
-    const result = editProfilePatch(content, edit)
-    content = result.content
-    reports.push({ label: edit.label, ids: result.ids, notes: result.notes })
+async function assertContents(path, expected) {
+  let current
+  try {
+    current = await readFile(path)
+  } catch (error) {
+    if (error.code === 'ENOENT' && expected === null) return
+    throw error
   }
-  if (!dryRun && content !== original) {
-    if (mode !== undefined) await access(target, constants.W_OK)
-    else await mkdir(dirname(target), { recursive: true })
-    await replaceFile(target, content, mode)
+  if (expected === null || !current.equals(expected)) throw new Error(`profile changed during installation: ${path}`)
+}
+
+/** Stage every destination first. Keep a rollback copy until all renames succeed. */
+async function publishProfiles(changes) {
+  const temporary = new Set()
+  const published = []
+  try {
+    for (const profile of changes) {
+      const { path, original, mode, content } = profile
+      if (original === null) await mkdir(dirname(path), { recursive: true })
+      else await access(path, constants.W_OK)
+      profile.staged = await stageFile(path, content, mode)
+      temporary.add(profile.staged)
+      if (original !== null && profile !== changes.at(-1)) {
+        profile.backup = await stageFile(path, original, mode)
+        temporary.add(profile.backup)
+      }
+    }
+    for (const profile of changes) {
+      await assertContents(profile.path, profile.original)
+      await rename(profile.staged, profile.path)
+      temporary.delete(profile.staged)
+      published.push(profile)
+    }
+  } catch (error) {
+    const failures = []
+    for (const profile of published.reverse()) {
+      try {
+        await assertContents(profile.path, Buffer.from(profile.content))
+        if (profile.original === null) await unlink(profile.path)
+        else await rename(profile.backup, profile.path)
+      } catch (failure) {
+        const saved = profile.backup ? `; original saved in ${profile.backup}` : ''
+        failures.push(`could not restore ${profile.path}: ${failure.message}${saved}`)
+      }
+      temporary.delete(profile.backup)
+    }
+    if (failures.length) throw new Error([error.message, ...failures].join('\n'), { cause: error })
+    throw error
+  } finally {
+    await Promise.all([...temporary].map(path => unlink(path)))
+  }
+}
+
+export async function updateProfileFiles(updates, { dryRun = false } = {}) {
+  const profiles = new Map()
+  const reports = new Map()
+  for (const [path, edits] of updates) {
+    // Two profile names may be symlinks to the same managed patch.
+    const target = await destination(path)
+    if (!profiles.has(target)) profiles.set(target, await readProfile(target))
+    const profile = profiles.get(target)
+    const entries = []
+    for (const edit of edits) {
+      const result = editProfilePatch(profile.content, edit)
+      profile.content = result.content
+      entries.push({ label: edit.label, ids: result.ids, notes: result.notes })
+    }
+    reports.set(path, entries)
+  }
+  if (!dryRun) {
+    const changed = [...profiles.values()].filter(p => p.content !== (p.original?.toString('utf8') ?? ''))
+    await publishProfiles(changed)
   }
   return reports
+}
+
+export async function updateProfileFile(path, edits, options) {
+  return (await updateProfileFiles([[path, edits]], options)).get(path)
 }

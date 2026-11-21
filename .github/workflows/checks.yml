@@ -29,6 +29,10 @@ jobs:
         run: node --test test/cache-publication.test.mjs
       - name: Check cached core permissions and startup diagnostics
         run: node --test test/runtime-startup.test.mjs
+      - name: Check delivery to slow MCP clients and cached engine permissions
+        run: node --test test/relay-output.test.mjs test/engine-permissions.test.mjs
+      - name: Check profile reinstallation and rollback across installer targets
+        run: node --test test/profile-ids.test.mjs test/profile-patch.test.mjs test/installer-targets.test.mjs
 
   price-extension:
     name: Price calculator tutorial (${{ matrix.os }})
@@ -75,7 +79,7 @@ jobs:
           node-version: '24'
 
       - name: Installer and native bridge regression tests
-        run: node --test test/port.test.mjs test/profile-patch.test.mjs
+        run: node --test test/port.test.mjs
 
       - name: Native MCP process and workspace pool integration
         run: node --test test/native-bridge.test.mjs
