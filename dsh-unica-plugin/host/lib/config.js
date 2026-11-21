@@ -2,13 +2,14 @@ import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { DEFAULT_SERVER_NAME } from './naming.js'
 import { resolveArtifactDelivery } from '../../bootstrap/artifact-delivery.mjs'
 
 /** The plugin root (`dsh-unica-plugin/`) that ships `bootstrap/launch.mjs`. */
 export const DEFAULT_PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 const DEFAULTS = {
-  serverName: 'unica',
+  serverName: DEFAULT_SERVER_NAME,
   nodePath: 'node',
   probeCwd: null,
   defaultCwd: null,

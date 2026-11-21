@@ -258,7 +258,7 @@ view {} → view {at} → apply (план) → diff (executionToken) → apply (
 unica.view  ->  mcp__unica__unica_view_6f3a42290cc8
 ```
 
-Формула реализована в `host/lib/naming.js`. Файл `tool-map.json` содержит соответствия для 11 инструментов. При генерации навыков `tools/build-skills.mjs` проверяет имена по этой карте.
+Формула реализована в `host/lib/naming.js`. Файл `tool-map.json` содержит соответствия для 11 инструментов. При генерации навыков `tools/build-skills.mjs` проверяет имена по этой карте. При пользовательском `serverName` описание каждого инструмента в каталоге DSH содержит строку `Skill tool: <имя из навыка>`, по которой навык находит зарегистрированное имя для вызова.
 
 **Каталог на каждый вызов.** У инструмента есть `execute(args, exec)`, и `exec`
 несёт агента: мост спрашивает у `ctx.workingDirectory.ensure(exec.agent)` текущий

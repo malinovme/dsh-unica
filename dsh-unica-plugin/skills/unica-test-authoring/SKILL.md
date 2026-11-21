@@ -5,6 +5,8 @@ description: "Проектирование тестов 1С: YaXUnit и Vanessa 
 
 # Test Authoring
 
+В примерах указаны имена инструментов стандартного сервера Unica. При другом `serverName` найдите в каталоге DSH инструмент нужного сервера со строкой `Skill tool: <имя из примера>` в описании. Подставьте его зарегистрированное имя в вызов, включая поле `name` в примерах JSON.
+
 ## MCP routing
 
 - Preferred path: use MCP `unica` tools `mcp__unica__unica_search_a8644a757dff`, `mcp__unica__unica_view_6f3a42290cc8 {}`, and `mcp__unica__unica_check_6db7d2a7495f`.

@@ -11,6 +11,8 @@ allowed-tools:
 
 # /cf-edit — редактирование конфигурации 1С
 
+В примерах указаны имена инструментов стандартного сервера Unica. При другом `serverName` найдите в каталоге DSH инструмент нужного сервера со строкой `Skill tool: <имя из примера>` в описании. Подставьте его зарегистрированное имя в вызов, включая поле `name` в примерах JSON.
+
 ## MCP routing
 
 - Preferred path: use MCP `unica` tool `mcp__unica__unica_apply_8ba7af26408e` по адресу корня набора (`<набор>:Configuration`): свойства правит `props.set`, состав — `object.create`/`object.remove`, порядок подсистем верхнего уровня — `subsystemOrder.set`; остальной командный интерфейс — на интерфейсе подсистемы через `/unica:interface-edit`.

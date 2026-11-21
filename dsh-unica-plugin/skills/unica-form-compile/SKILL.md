@@ -10,6 +10,8 @@ allowed-tools:
 
 # /form-compile — Генерация Form.xml
 
+В примерах указаны имена инструментов стандартного сервера Unica. При другом `serverName` найдите в каталоге DSH инструмент нужного сервера со строкой `Skill tool: <имя из примера>` в описании. Подставьте его зарегистрированное имя в вызов, включая поле `name` в примерах JSON.
+
 ## MCP routing
 
 - Preferred path: use MCP `unica` tool `mcp__unica__unica_apply_8ba7af26408e`: форма заводится

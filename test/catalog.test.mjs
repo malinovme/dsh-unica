@@ -35,7 +35,7 @@ async function setup(t) {
     effect(setup) { cleanups.push(setup()) },
     logger: { warn: msg => warnings.push(msg), error: msg => errors.push(msg) },
   }
-  const start = startupTimeoutMs => apply(ctx, { nodePath: process.execPath, probeCwd: root, startupTimeoutMs })
+  const start = (startupTimeoutMs, serverName) => apply(ctx, { nodePath: process.execPath, probeCwd: root, startupTimeoutMs, serverName })
   return { root, gate, registered, warnings, errors, unload, start }
 }
 
@@ -114,3 +114,22 @@ test('activation rejects a repeated catalog cursor', async (t) => {
   assert.match(errors[0], /invalid or repeated tools\/list cursor/)
   assert.deepEqual(registered, [])
 })
+
+for (const serverName of ['unica', 'team']) {
+  test(`the form editing skill resolves and calls the registered apply tool on ${serverName}`, async (t) => {
+    const { root, gate, registered, start } = await setup(t)
+    await rm(gate)
+    await writeFile(join(root, 'form-tools'), '')
+    await start(1500, serverName)
+    const skill = await readFile(new URL('../dsh-unica-plugin/skills/unica-form-edit/SKILL.md', import.meta.url), 'utf8')
+    assert.match(skill, /Skill tool: <имя из примера>/)
+    const skillName = skill.match(/`(mcp__unica__unica_apply_[0-9a-f]+)`/)?.[1]
+    assert.ok(skillName)
+    const tool = registered.find(tool => tool.name === skillName || tool.description.split('\n').includes(`Skill tool: ${skillName}`))
+    assert.ok(tool, `no registered tool for ${skillName}`)
+    assert.ok(tool.name.startsWith(`mcp__${serverName}__`))
+    assert.match(tool.description, /Plan or commit a change/)
+    const reply = await tool.execute({}, { agent: { session: 'form-edit' } })
+    assert.equal(reply.structuredContent.data.name, 'unica.apply')
+  })
+}

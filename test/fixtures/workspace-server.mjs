@@ -8,6 +8,7 @@ const cancelled = []
 let serverRequest
 function toolPage(cursor) {
   const first = { tools: [{ name: 'unica.view' }] }
+  if (existsSync('form-tools')) first.tools.push({ name: 'unica.apply', description: 'Plan or commit a change.' })
   if (!existsSync('paginate-tools')) return first
   if (cursor === undefined) return { ...first, nextCursor: 'more' }
   if (cursor !== 'more') throw new Error('unexpected tools/list cursor: ' + cursor)

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 
+export const DEFAULT_SERVER_NAME = 'unica'
+
 const MAX_PUBLIC_NAME_LENGTH = 64
 const INVALID_NAME_CHARS = /[^A-Za-z0-9_-]/g
 const HASH_LENGTH = 12

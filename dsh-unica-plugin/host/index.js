@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadCatalog, retryCatalog } from './lib/catalog.js'
 import { resolveConfig } from './lib/config.js'
-import { publicToolName } from './lib/naming.js'
+import { DEFAULT_SERVER_NAME, publicToolName } from './lib/naming.js'
 import { ProcPool, canonicalCwd } from './lib/pool.js'
 import { normalizeResult } from './lib/render.js'
 
@@ -54,9 +54,13 @@ async function resolveCwd(ctx, exec, config, log) {
 
 function createToolDefinition({ tool, publicName, ctx, config, pool, log }) {
   const rawName = tool.name
+  const description = typeof tool.description === 'string' ? tool.description : `unica ${rawName}`
+  // The bundled skills use the default DSH names. Expose the exact lookup key
+  // in the live catalog when this bridge has a different namespace.
+  const skillName = publicToolName(DEFAULT_SERVER_NAME, rawName)
   return {
     name: publicName,
-    description: typeof tool.description === 'string' ? tool.description : `unica ${rawName}`,
+    description: publicName === skillName ? description : `Skill tool: ${skillName}\n${description}`,
     parameters: tool.inputSchema ?? { type: 'object', properties: {} },
     output: {
       schema: {

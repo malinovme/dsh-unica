@@ -5,6 +5,8 @@ description: "Поиск и применение паттернов БСП. Ис
 
 # BSP Patterns
 
+В примерах указаны имена инструментов стандартного сервера Unica. При другом `serverName` найдите в каталоге DSH инструмент нужного сервера со строкой `Skill tool: <имя из примера>` в описании. Подставьте его зарегистрированное имя в вызов, включая поле `name` в примерах JSON.
+
 ## MCP routing
 
 - Preferred path: use MCP `unica` tools `mcp__unica__unica_search_a8644a757dff`, `mcp__unica__unica_view_6f3a42290cc8` on the object node, `mcp__unica__unica_view_6f3a42290cc8` on the form and role nodes, `mcp__unica__unica_docs_fd15d9ecf894`, and `mcp__unica__unica_run_189d01f64719`.
