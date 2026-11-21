@@ -45,7 +45,7 @@ test('rebuilding inside the source excludes previous outputs and preserves a ver
     const list = spawnSync('tar', ['-tzf', archive], { encoding: 'utf8' })
     assert.equal(list.status, 0, list.stderr)
     assert.deepEqual(list.stdout.trim().split(/\r?\n/), manifest.contents)
-    assert.ok(!manifest.contents.some(file => file.startsWith('dist/')))
+    assert.deepEqual(manifest.contents.filter(file => file.startsWith('dist/')), [])
     assert.equal(createHash('sha256').update(await readFile(archive)).digest('hex'), manifest.sha256)
   }
   const previous = await Promise.all([readFile(archive), readFile(checksum)])

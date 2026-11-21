@@ -9,10 +9,10 @@
 // build report, and the archive's own output.
 import { createHash } from 'node:crypto'
 import { copyFile, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
-const PLUGIN_ROOT = resolve(import.meta.dirname ?? '.')
+const PLUGIN_ROOT = await realpath(resolve(import.meta.dirname ?? '.'))
 const outArg = process.argv.indexOf('--out')
 const requested = resolve(outArg === -1 ? join(PLUGIN_ROOT, '..', 'dsh-plugin-unica.tar.gz') : process.argv[outArg + 1])
 
@@ -20,7 +20,7 @@ await mkdir(dirname(requested), { recursive: true })
 const OUT = join(await realpath(dirname(requested)), basename(requested))
 const manifestPath = OUT + '.sha256.json'
 const stage = OUT + '.packaging'
-const excludedPaths = new Set([OUT, manifestPath, stage])
+const excludedPaths = [OUT, manifestPath, stage]
 
 // Only machine-specific and regenerable paths are excluded. install.mjs rewrites
 // every absolute path for the target machine anyway, so nothing here is needed
@@ -54,7 +54,7 @@ if ((await readFile(join(PLUGIN_ROOT, 'bootstrap', 'launch.mjs'), 'utf8')).inclu
 async function* walk(dir, rel = '') {
   for (const e of await readdir(dir, { withFileTypes: true })) {
     const abs = join(dir, e.name)
-    if (excludedPaths.has(abs)) continue
+    if (excludedPaths.some(path => relative(path, abs) === '')) continue
     const r = rel === '' ? e.name : `${rel}/${e.name}`
     if (e.isDirectory()) {
       if (EXCLUDE_DIRS.has(e.name) || isOsMetadata(e.name)) continue
