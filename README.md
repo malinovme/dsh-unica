@@ -289,7 +289,7 @@ tools/build-runtime-manifest.mjs` собирает его из `third-party/tool
 |---|---|
 | `UNICA_BRIDGE_TEXT_FALLBACK=0` | отключить релей, вернуть сырой stdio |
 | `UNICA_WORKSPACE_ROOT=<путь>` | лаунчер: закрепить каталог при ручном запуске (мост его не использует) |
-| `UNICA_ARTIFACT_DELIVERY=background\|eager\|off` | докачка движков: за сервером (по умолчанию), до старта, или никогда |
+| `UNICA_ARTIFACT_DELIVERY=background\|eager\|off` | докачка движков в фоне (по умолчанию), до старта или никогда. Явный `artifactDelivery` в настройках моста имеет приоритет |
 | `UNICA_LAUNCH_SELFTEST_COMMAND=<json argv>` | тестовый хук: подменить рантайм |
 
 В режиме `eager` сервер запускается после успешной доставки всех движков. Если доставить движок не удалось, запуск завершается с его именем и причиной ошибки.

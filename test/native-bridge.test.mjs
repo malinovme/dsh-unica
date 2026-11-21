@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -12,7 +12,7 @@ import { ProcPool } from '../dsh-unica-plugin/host/lib/pool.js'
 import { UnicaProc } from '../dsh-unica-plugin/host/lib/proc.js'
 
 const fixture = join(import.meta.dirname, 'fixtures/workspace-server.mjs')
-const launcher = resolve(import.meta.dirname, '../dsh-unica-plugin/bootstrap/launch.mjs')
+const bootstrapSource = new URL('../dsh-unica-plugin/bootstrap/', import.meta.url)
 
 async function setup(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'unica-native-')))
@@ -400,9 +400,8 @@ test('a pooled workspace still answers calls after a background engine HTTP 503'
   delete process.env.UNICA_LAUNCH_SELFTEST_COMMAND
   const target = process.platform === 'win32' ? 'win-x64' : `${process.platform}-${process.arch}`
   const core = join(config.runtimeCacheDir, 'unica', 'test--cached', target)
-  const bootstrap = join(root, 'bootstrap')
-  await Promise.all([mkdir(core, { recursive: true }), mkdir(bootstrap)])
-  await copyFile(launcher, join(bootstrap, 'launch.mjs'))
+  await mkdir(core, { recursive: true })
+  await cp(bootstrapSource, join(root, 'bootstrap'), { recursive: true })
   await writeFile(join(core, '.ready.json'), '{}')
   // This test runs in the POSIX CI job. Use the fixture as the executable
   // entrypoint, so the launcher takes its normal background-delivery branch.

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { copyFile, cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -48,8 +48,8 @@ async function setup(t, mode, delivery = 'background') {
       install: { strategy: 'file', as: 'engine' }, entrypoint: 'engine',
     } } },
   }
-  await mkdir(join(root, 'bootstrap'))
-  await copyFile(new URL('../dsh-unica-plugin/bootstrap/launch.mjs', import.meta.url), join(root, 'bootstrap', 'launch.mjs'))
+  if (mode === 'unreadable') artifacts['bsl-analyzer'] = artifacts['v8-runner']
+  await cp(new URL('../dsh-unica-plugin/bootstrap/', import.meta.url), join(root, 'bootstrap'), { recursive: true })
   await writeFile(join(root, 'runtime-manifest.json'), JSON.stringify({ artifacts }))
 
   const config = resolveConfig({
@@ -68,7 +68,7 @@ async function setup(t, mode, delivery = 'background') {
   process.env.NODE_OPTIONS = [previous.NODE_OPTIONS, '--import=' + new URL('./fixtures/launcher-artifacts.mjs', import.meta.url).href]
     .filter(Boolean).join(' ')
   process.env.UNICA_TEST_ARTIFACTS = JSON.stringify({
-    root, mode, server: join(import.meta.dirname, 'fixtures/workspace-server.mjs'),
+    root, mode, deniedPath: join(cache, 'v8-runner', `test--${engineHash}`, target, 'engine'), server: join(import.meta.dirname, 'fixtures/workspace-server.mjs'),
   })
   t.after(() => {
     for (const key of ['NODE_OPTIONS', 'UNICA_TEST_ARTIFACTS', 'UNICA_LAUNCH_SELFTEST_COMMAND']) {
@@ -77,6 +77,64 @@ async function setup(t, mode, delivery = 'background') {
     }
   })
   return { root, config, cleanups, engine: join(cache, 'v8-runner', `test--${engineHash}`, target) }
+}
+
+test('the native bridge passes the configured or inherited artifact delivery mode to the runtime', async (t) => {
+  const { root } = await setup(t)
+  const originalMode = process.env.UNICA_ARTIFACT_DELIVERY
+  t.after(() => {
+    if (originalMode === undefined) delete process.env.UNICA_ARTIFACT_DELIVERY
+    else process.env.UNICA_ARTIFACT_DELIVERY = originalMode
+  })
+  process.env.UNICA_LAUNCH_SELFTEST_COMMAND = JSON.stringify([process.execPath, join(import.meta.dirname, 'fixtures/workspace-server.mjs')])
+  for (const [inherited, configured, expected] of [
+    [undefined, undefined, 'background'], ['off', undefined, 'off'], ['eager', undefined, 'eager'],
+    ['off', 'eager', 'eager'], ['eagerr', 'background', 'background'],
+  ]) {
+    if (inherited === undefined) delete process.env.UNICA_ARTIFACT_DELIVERY
+    else process.env.UNICA_ARTIFACT_DELIVERY = inherited
+    const config = resolveConfig({ nodePath: process.execPath, pluginRoot: root, artifactDelivery: configured })
+    const proc = new UnicaProc({ cwd: root, config })
+    try {
+      await proc.start()
+      assert.equal((await proc.callTool('artifact-delivery', {})).structuredContent.mode, expected)
+    } finally {
+      proc.close()
+    }
+  }
+
+  const diagnostic = /artifactDelivery.*background.*eager.*off/
+  process.env.UNICA_ARTIFACT_DELIVERY = 'off'
+  assert.throws(() => resolveConfig({ artifactDelivery: 'eagerr' }), diagnostic)
+  process.env.UNICA_ARTIFACT_DELIVERY = 'eagerr'
+  assert.throws(() => resolveConfig({}), diagnostic)
+  const direct = spawnSync(process.execPath, [join(root, 'bootstrap', 'launch.mjs'), root], { encoding: 'utf8' })
+  assert.equal(direct.status, 1)
+  assert.match(direct.stderr, diagnostic)
+})
+
+for (const delivery of ['background', 'eager']) {
+  test(delivery + ' isolates a read error in an existing engine cache', async (t) => {
+    const { root, config, cleanups, engine } = await setup(t, 'unreadable', delivery)
+    await mkdir(engine, { recursive: true })
+    await writeFile(join(engine, 'engine'), 'fixture engine', { mode: 0o755 })
+    await writeFile(join(engine, '.ready.json'), '{}')
+    await writeFile(join(root, 'release-engine'), '')
+    const warnings = []
+    const proc = new UnicaProc({ cwd: root, config, log: { warn: message => warnings.push(message) } })
+    cleanups.push(() => proc.close())
+    const failure = /v8-runner delivery failed: .*EACCES/
+    if (delivery === 'eager') {
+      await assert.rejects(proc.start(), failure)
+    } else {
+      await proc.start()
+      assert.equal((await proc.callTool('unica.view', {})).structuredContent.data.workspaceRoot, root)
+      await waitFor(() => warnings.some(message => failure.test(message)), 'engine cache diagnostic')
+      const other = engine.replace('v8-runner', 'bsl-analyzer')
+      await waitFor(() => existsSync(join(other, '.ready.json')), 'delivery of the other engine')
+      assert.equal(await readFile(join(other, 'engine'), 'utf8'), 'fixture engine')
+    }
+  })
 }
 
 for (const mode of ['recover', 'corrupt', 'unavailable']) {

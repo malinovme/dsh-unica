@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { chmod, copyFile, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -48,8 +48,7 @@ for (const corrupt of [false, true]) {
       const descriptor = { asset: { sha256: digest }, entrypoint, files: [{ path: entrypoint, sha256: digest, executable: true }] }
       const coreDir = join(config.runtimeCacheDir, 'unica', 'test--' + digest, target)
       await mkdir(coreDir, { recursive: true })
-      await mkdir(join(root, 'bootstrap'))
-      await copyFile(new URL('../dsh-unica-plugin/bootstrap/launch.mjs', import.meta.url), join(root, 'bootstrap/launch.mjs'))
+      await cp(new URL('../dsh-unica-plugin/bootstrap/', import.meta.url), join(root, 'bootstrap'), { recursive: true })
       await writeFile(join(root, 'runtime-manifest.json'), JSON.stringify({ artifacts: { unica: { version: 'test', targets: { [target]: descriptor } } } }))
       await writeFile(join(coreDir, '.ready.json'), '{}')
       const core = join(coreDir, entrypoint)

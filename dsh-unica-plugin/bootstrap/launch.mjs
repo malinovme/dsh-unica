@@ -33,6 +33,7 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
+import { resolveArtifactDelivery } from './artifact-delivery.mjs'
 
 const PLUGIN_ROOT = resolve(process.argv[2] ?? dirname(dirname(fileURLToPath(import.meta.url))))
 
@@ -110,9 +111,9 @@ process.env.UNICA_PROVIDER_STATE_DIR ??= join(dirname(cacheRoot), 'provider-stat
 /** Where one artifact for this target lives, plus its installed marker. */
 function artifactAt(name) {
   const artifact = artifacts[name]
-  if (artifact === undefined) die(`the runtime manifest has no artifact ${name}`)
+  if (artifact === undefined) throw new Error(`the runtime manifest has no artifact ${name}`)
   const descriptor = artifact.targets?.[wanted]
-  if (descriptor === undefined) die(`artifact ${name} has no entry for ${wanted}`)
+  if (descriptor === undefined) throw new Error(`artifact ${name} has no entry for ${wanted}`)
   const dir = join(cacheRoot, name, `${artifact.version}--${descriptor.asset.sha256}`, wanted)
   return { name, artifact, descriptor, dir, marker: join(dir, '.ready.json') }
 }
@@ -413,23 +414,18 @@ async function installArtifact(name) {
       await rm(scratch, { recursive: true, force: true })
     }
   }
+  if (name !== 'unica') console.error(`unica launcher: ${name} delivered`)
   return entry
 }
 
-/** Engines the runtime expects but this cache does not have yet, cheapest first. */
-function missingEngines() {
+async function deliverEngines({ eager = false } = {}) {
   const order = ['v8-runner', 'bsl-analyzer']
-  return Object.keys(artifacts)
-    .filter((name) => name !== 'unica' && !ready(artifactAt(name)))
+  const names = Object.keys(artifacts).filter(name => name !== 'unica')
     .sort((left, right) => order.indexOf(left) - order.indexOf(right))
-}
-
-async function deliverEngines(names, { eager = false } = {}) {
   for (const name of names) {
     for (const waitMs of [250, 750, null]) {
       try {
         await installArtifact(name)
-        console.error(`unica launcher: ${name} delivered`)
         break
       } catch (error) {
         if (error.transient && waitMs !== null) {
@@ -550,6 +546,13 @@ const selfTestArgv = process.env.UNICA_LAUNCH_SELFTEST_COMMAND
 const selfTest = selfTestArgv === undefined || selfTestArgv === '' ? null : JSON.parse(selfTestArgv)
 const selfTesting = Array.isArray(selfTest) && selfTest.length > 0
 
+let delivery
+try {
+  delivery = resolveArtifactDelivery()
+} catch (error) {
+  die(error.message)
+}
+
 let command
 let commandArgs = []
 if (selfTesting) {
@@ -569,12 +572,10 @@ if (selfTesting) {
   // is in place, and the default starts the server at once and delivers behind it:
   // engines appear on the next call that needs them, and a call that needs one
   // before it lands answers `bundled_tool_missing`, exactly as without them.
-  const delivery = process.env.UNICA_ARTIFACT_DELIVERY ?? 'background'
-  const pending = delivery === 'off' ? [] : missingEngines()
-  if (delivery === 'eager' && pending.length > 0) {
-    await deliverEngines(pending, { eager: true }).catch((error) => die(error.message))
-  } else if (delivery === 'background' && pending.length > 0) {
-    void deliverEngines(pending)
+  if (delivery === 'eager') {
+    await deliverEngines({ eager: true }).catch(error => die(error.message))
+  } else if (delivery === 'background') {
+    void deliverEngines()
   }
 }
 
