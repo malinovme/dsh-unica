@@ -68,7 +68,7 @@ for (const wrapper of ['sh', 'ps1']) {
       'first-install', 'success', 'unrelated-directory', 'update-in-progress', 'interrupted-after-backup',
       'killed-updater', 'committed-update', 'edited-during-update', 'interrupted-publication',
       'late-conflict-first-install', 'late-conflict-upgrade', 'unchanged-profile', 'interrupted-publication-conflict',
-      'legacy-profile-conflict', wrapper === 'ps1' ? 'reused-pid' : 'claim-collision',
+      'profile-copy-error', 'profile-cleanup-error', 'legacy-profile-conflict', wrapper === 'ps1' ? 'reused-pid' : 'claim-collision',
     ]
     if (wrapper === 'ps1') scenarios.push('legacy-recovery-without-draft')
     if (wrapper === 'ps1' && process.platform === 'win32') scenarios.push('busy-previous-at-commit', 'locked-draft-during-recovery')
@@ -118,6 +118,33 @@ for (const wrapper of ['sh', 'ps1']) {
           } else {
             await assert.rejects(readdir(install), { code: 'ENOENT' })
           }
+          await assert.rejects(readdir(transaction), { code: 'ENOENT' })
+          return
+        }
+        if (scenario === 'profile-copy-error' || scenario === 'profile-cleanup-error') {
+          const preload = pathToFileURL(join(import.meta.dirname, 'fixtures', 'fail-profile-publication.mjs'))
+          const failPublication = step => retry({
+            NODE_OPTIONS: [process.env.NODE_OPTIONS, '--import=' + preload.href].filter(Boolean).join(' '),
+            FIXTURE_PROFILE: profile, FIXTURE_PUBLICATION_FAILURE: step,
+          })
+          if (scenario === 'profile-copy-error') {
+            await assert.rejects(failPublication('copy'), /fixture: profile directory denied access/)
+            assert.equal(await readFile(profile, 'utf8'), oldProfile)
+            assert.equal(await readFile(join(install, 'install.mjs'), 'utf8'), '// old installer')
+            assert.equal(await readFile(join(install, 'old.txt'), 'utf8'), 'old')
+            await assert.rejects(readdir(transaction), { code: 'ENOENT' })
+          } else {
+            // The rename succeeded but its acknowledgement was interrupted.
+            // A later failure to read/copy the draft cannot justify rollback.
+            await assert.rejects(failPublication('cleanup'), /fixture: profile directory denied access/)
+            await assert.rejects(failPublication('copy'), /fixture: profile directory denied access/)
+            assert.equal(await readFile(profile, 'utf8'), install)
+            assert.equal(await readFile(join(install, 'install.mjs'), 'utf8'), entrypoint)
+            assert.equal(await readFile(join(transaction, 'publishing-profile'), 'utf8'), '')
+          }
+          await retry({})
+          assert.equal(await readFile(profile, 'utf8'), install)
+          assert.equal(await readFile(join(install, 'install.mjs'), 'utf8'), entrypoint)
           await assert.rejects(readdir(transaction), { code: 'ENOENT' })
           return
         }
