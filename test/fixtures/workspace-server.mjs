@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, realpathSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -36,6 +36,13 @@ for await (const line of createInterface({ input: process.stdin })) {
     }
     continue
   }
+  if (method === 'tools/list') {
+    if (process.env.FIXTURE_CATALOG_TRACE) appendFileSync(process.env.FIXTURE_CATALOG_TRACE, realpathSync.native('.') + '\n')
+    if (process.env.FIXTURE_REFUSED_PROBE_CWD === realpathSync.native('.')) {
+      console.log(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32000, message: 'catalog unavailable in ' + process.cwd() } }))
+      continue
+    }
+  }
   if (method === 'initialize' && existsSync('hold-initialize')) {
     writeFileSync('launcher-pid', String(process.ppid))
     writeFileSync('initialize-started', String(process.pid))
@@ -63,6 +70,10 @@ for await (const line of createInterface({ input: process.stdin })) {
     }
     if (params.name === 'artifact-delivery') {
       console.log(JSON.stringify({ jsonrpc: '2.0', id, result: { structuredContent: { mode: process.env.UNICA_ARTIFACT_DELIVERY } } }))
+      continue
+    }
+    if (params.name === 'unica.view' && process.env.FIXTURE_VIEW_REPLY) {
+      console.log(JSON.stringify({ jsonrpc: '2.0', id, result: JSON.parse(process.env.FIXTURE_VIEW_REPLY) }))
       continue
     }
     if (params.name === 'unica.view' && process.env.FIXTURE_VIEW_ERROR) {

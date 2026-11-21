@@ -21,7 +21,8 @@ export class UnicaProc {
   #closed = false
   #finishPreparation
 
-  constructor({ cwd, config, log }) {
+  constructor({ cwd, config, log, closeTree = false }) {
+    this.closeTree = closeTree
     this.cwd = cwd
     this.config = config
     this.log = log
@@ -187,12 +188,12 @@ export class UnicaProc {
    * for the whole tree; a pooled process does not, because the daemon is shared
    * by every server of the same core identity and is meant to outlive one of them.
    */
-  close(reason = 'unica process closed', { tree = false } = {}) {
+  close(reason = 'unica process closed', { tree = this.closeTree } = {}) {
     if (this.#closing) return
     this.#closing = true
     this.#failAll(new Error(reason))
     const child = this.#child
-    if (child === undefined || child.exitCode !== null) return
+    if (child?.pid === undefined || child.exitCode !== null) return
     if (tree && process.platform === 'win32') {
       // /T walks the child list, so launcher, server and daemon go together.
       // spawnSync because close() promises the processes are gone when it returns.

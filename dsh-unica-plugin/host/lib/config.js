@@ -55,6 +55,15 @@ function positiveInteger(value, fallback, field) {
   return value
 }
 
+// Node schedules delays above the signed 32-bit limit after just 1 ms.
+const MAX_TIMEOUT_MS = 2 ** 31 - 1
+
+function timeoutMs(config, field) {
+  const value = positiveInteger(config[field], DEFAULTS[field], field)
+  if (value > MAX_TIMEOUT_MS) throw new Error(`unica-native: ${field} must be at most ${MAX_TIMEOUT_MS} ms`)
+  return value
+}
+
 /**
  * Validate the row config and fill defaults. Throwing here fails the plugin row
  * at activation, which is better than a half-working bridge.
@@ -80,8 +89,8 @@ export function resolveConfig(raw, { pluginRoot = DEFAULT_PLUGIN_ROOT } = {}) {
     defaultCwd: expandPath(config.defaultCwd) ?? DEFAULTS.defaultCwd,
     maxProcesses: positiveInteger(config.maxProcesses, DEFAULTS.maxProcesses, 'maxProcesses'),
     idleMs: positiveInteger(config.idleMs, DEFAULTS.idleMs, 'idleMs'),
-    coldStartTimeoutMs: positiveInteger(config.coldStartTimeoutMs, DEFAULTS.coldStartTimeoutMs, 'coldStartTimeoutMs'),
-    startupTimeoutMs: positiveInteger(config.startupTimeoutMs, DEFAULTS.startupTimeoutMs, 'startupTimeoutMs'),
-    toolCallTimeoutMs: positiveInteger(config.toolCallTimeoutMs, DEFAULTS.toolCallTimeoutMs, 'toolCallTimeoutMs'),
+    coldStartTimeoutMs: timeoutMs(config, 'coldStartTimeoutMs'),
+    startupTimeoutMs: timeoutMs(config, 'startupTimeoutMs'),
+    toolCallTimeoutMs: timeoutMs(config, 'toolCallTimeoutMs'),
   }
 }

@@ -43,6 +43,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { indentBlock } from './installer/profile-patch.mjs'
 import { prepareProfileFiles } from './installer/profile-file.mjs'
 import { loadYaml, yamlWithJsTag } from './tools/lib/yaml.mjs'
+import { catalogCwd } from './host/lib/catalog.js'
 import { resolveConfig } from './host/lib/config.js'
 import { harnessAsar, harnessRoots, readAsarFile } from './tools/lib/harness.mjs'
 
@@ -207,7 +208,7 @@ function nativeSelftest(rawConfig) {
   })
   // Each MCP phase enforces its own configured timeout; the outer timer is a backstop.
   const probeBudget = config.coldStartTimeoutMs + 2 * config.startupTimeoutMs
-  const budget = Math.min(2 ** 31 - 1, (config.probeCwd ? 2 : 1) * probeBudget + config.toolCallTimeoutMs + 5000)
+  const budget = Math.min(2 ** 31 - 1, (catalogCwd(config) === VERIFY_CWD ? 1 : 2) * probeBudget + config.toolCallTimeoutMs + 5000)
   if (!cached) {
     console.log(`  runtime       : not cached yet — downloading and verifying it first, this can take minutes`)
   }
