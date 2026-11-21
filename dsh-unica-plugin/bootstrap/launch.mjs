@@ -40,10 +40,16 @@ const PLUGIN_ROOT = resolve(process.argv[2] ?? dirname(dirname(fileURLToPath(imp
 // server. TerminateProcess on the launcher alone would leave the server behind.
 let child
 let unpacking
+let shutdownTimer
 
 function forwardSignal(signal) {
   if (child && child.exitCode === null && child.signalCode === null) {
     child.kill(signal)
+    // Reap our direct server before UnicaProc's 2 s launcher deadline.
+    // Its shared daemon may still be serving other sessions.
+    if (process.platform !== 'win32' && !shutdownTimer) {
+      shutdownTimer = setTimeout(() => child.kill('SIGKILL'), 1000).unref()
+    }
   } else {
     unpacking?.kill(signal)
     process.exit(0)
@@ -584,6 +590,7 @@ const relayed = TEXT_FALLBACK && relay(child).catch((error) => {
 })
 child.on('error', (error) => die(`cannot start ${command}: ${error.message}`))
 child.on('exit', async (code, signal) => {
+  clearTimeout(shutdownTimer)
   if (signal !== null) {
     process.off(signal, forwardSignal)
     return process.kill(process.pid, signal)

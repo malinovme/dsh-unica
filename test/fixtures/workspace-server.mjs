@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -42,6 +43,16 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (method === 'notifications/cancelled') cancelled.push(params.requestId)
   if (method === 'tools/call') {
     calls.push({ id, name: params.name })
+    if (params.name === 'hold-shutdown') {
+      process.on('SIGTERM', () => writeFileSync('sigterm-received', ''))
+      // Outlive stdin EOF to model a server stuck during shutdown.
+      setTimeout(() => process.exit(1), 30_000)
+      const daemon = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' })
+      daemon.unref()
+      const result = { pid: process.pid, launcherPid: process.ppid, daemonPid: daemon.pid }
+      console.log(JSON.stringify({ jsonrpc: '2.0', id, result }))
+      continue
+    }
     if (params.name === 'server-requests') {
       serverRequest = { id, replies: [] }
       console.log(JSON.stringify({ jsonrpc: '2.0', id, method: 'ping' }))
