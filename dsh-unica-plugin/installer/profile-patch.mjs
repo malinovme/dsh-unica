@@ -20,20 +20,49 @@ function findEntryEnd(lines, at) {
   return lines.length
 }
 
+/** Match an id row without interpreting any other YAML content. */
+function idRow(line, indent, id) {
+  const prefix = `${indent}- id:`
+  if (!line.startsWith(prefix)) return undefined
+  const value = line.slice(prefix.length).match(/^\s+(?:'([^']*)'|"([^"]*)"|([^\s#]+))(?:\s+(#.*))?\s*$/)
+  if (!value || (value[1] ?? value[2] ?? value[3]) !== id) return undefined
+  return { comment: value[4] }
+}
+
+// Carry the annotation on a managed id to its replacement. Preserve extra
+// annotations from old duplicates, or from retired ids, at their source.
+function retainComment(match, indent, annotation) {
+  if (!match.comment) return []
+  if (annotation && !annotation.comment) {
+    annotation.comment = match.comment
+    return []
+  }
+  return [indent + match.comment]
+}
+
 /**
- * Removes the top-level entry with this id, keeping everything else intact.
+ * Removes top-level entries with this id, keeping everything else intact.
  *
  * @returns the new file text, or `undefined` when the id has no top-level entry
  */
-function removeTopLevelEntry(text, id) {
+function removeTopLevelEntries(text, id, annotation) {
   const lines = text.split('\n')
-  const at = lines.indexOf(`- id: ${id}`)
-  if (at === -1) return undefined
-  let end = findEntryEnd(lines, at)
-  // A section comment immediately before the next row belongs to that row.
-  while (end > at + 1 && (lines[end - 1].trim() === '' || lines[end - 1].startsWith('#'))) end--
-  lines.splice(at, end - at)
-  return lines.join('\n')
+  const kept = []
+  let removed = false
+  for (let i = 0; i < lines.length; i++) {
+    const match = idRow(lines[i], '', id)
+    if (!match) {
+      kept.push(lines[i])
+      continue
+    }
+    let end = findEntryEnd(lines, i)
+    // A section comment immediately before the next row belongs to that row.
+    while (end > i + 1 && (lines[end - 1].trim() === '' || lines[end - 1].startsWith('#'))) end--
+    kept.push(...retainComment(match, '', annotation))
+    i = end - 1
+    removed = true
+  }
+  return removed ? kept.join('\n') : undefined
 }
 
 /**
@@ -57,7 +86,7 @@ function splitEntries(block) {
  *
  * @returns `{ text, removed }`
  */
-function removeInsertChild(text, id) {
+function removeInsertChild(text, id, annotation) {
   const lines = text.split('\n')
   const out = []
   let removed = 0
@@ -76,18 +105,20 @@ function removeInsertChild(text, id) {
       }
     }
     const indent = ' '.repeat(width)
-    const child = `${indent}- id: ${id}`
     const kept = []
     for (let j = 0; j < payload.length; j += 1) {
-      if (width > 0 && payload[j] === child) {
-        // The row owns the comment block directly above it.
-        while (kept.length > 0 && kept.at(-1).startsWith(`${indent}#`)) kept.pop()
-        // Comments can appear at any indentation inside the row. Advance
-        // through its last field, leaving the next row and its comments intact.
+      const match = width > 0 && idRow(payload[j], indent, id)
+      if (match) {
+        kept.push(...retainComment(match, indent, annotation))
+        // Indented content can include literal lines starting with '#'.
+        // Keep section comments at the sequence indentation for the next row.
         for (let next = j + 1; next < payload.length; next += 1) {
           const line = payload[next]
-          if (line.trim() === '' || line.trimStart().startsWith('#')) continue
-          if (indentWidth(line) <= width) break
+          if (line.trim() === '') continue
+          if (indentWidth(line) <= width) {
+            if (line.trimStart().startsWith('#')) continue
+            break
+          }
           j = next
         }
         removed += 1
@@ -161,27 +192,29 @@ export function editProfilePatch(raw, { banner = '', block, legacyIds = [] }) {
       text = stripped.text
       notes.push(`${legacy}: removed the retired MCP row`)
     }
-    const dropped = removeTopLevelEntry(text, legacy)
+    const dropped = removeTopLevelEntries(text, legacy)
     if (dropped !== undefined) {
       text = dropped
       notes.push(`${legacy}: removed the retired top-level row`)
     }
   }
-  for (const id of ids) {
-    const stripped = removeInsertChild(text, id)
+  for (const [i, id] of ids.entries()) {
+    const annotation = {}
+    const stripped = removeInsertChild(text, id, annotation)
     if (stripped.removed > 0) {
       text = stripped.text
       notes.push(`${id}: rewritten from a nested \`- insert:\` child`)
     }
-    const deduped = removeTopLevelEntry(text, id)
+    const deduped = removeTopLevelEntries(text, id, annotation)
     if (deduped !== undefined) {
       text = deduped
       notes.push(`${id}: replaced a top-level entry, which a patch cannot declare`)
     }
+    if (annotation.comment) rows[i] = rows[i].replace(/^[^\n]+/, line => line + '  ' + annotation.comment)
   }
 
   const entry = `- insert:\n${indentBlock(rows.join('\n\n'), '    ')}`
-  text = `${text.replace(/[ \t]*\n*$/, '')}\n\n${entry}\n`
+  text = `${text.replace(/\n*$/, '')}\n\n${entry}\n`
   text = removeEmptyInserts(text).text
   if (existing.trim() === '') text = `${banner}${text}`
 

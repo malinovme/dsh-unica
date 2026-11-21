@@ -41,7 +41,7 @@ import { spawn } from 'node:child_process'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { indentBlock } from './installer/profile-patch.mjs'
-import { updateProfileFile } from './installer/profile-file.mjs'
+import { updateProfileFiles } from './installer/profile-file.mjs'
 import { harnessAsar, harnessRoots, readAsarFile } from './tools/lib/harness.mjs'
 
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)))
@@ -51,8 +51,10 @@ const PRESET_ROW_ID = `preset-${PRESET_ID}`
 const PRESET_ROW_NAME = '@deepseek-ai/dsh-agent-preset'
 
 function arg(name, fallback) {
-  const i = process.argv.indexOf(`--${name}`)
-  return i === -1 ? fallback : process.argv[i + 1]
+  const flag = `--${name}`
+  const i = process.argv.findIndex(value => value === flag || value.startsWith(flag + '='))
+  if (i === -1) return fallback
+  return process.argv[i] === flag ? process.argv[i + 1] : process.argv[i].slice(flag.length + 1)
 }
 const DRY_RUN = process.argv.includes('--dry-run')
 const VERIFY = process.argv.includes('--verify')
@@ -73,6 +75,9 @@ function canonicalPath(value) {
 }
 const DSH_HOME = canonicalPath(arg('dsh-home', process.env.DSH_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.dsh')))
 const TARGET = arg('target', 'preset')
+if (!['preset', 'profile', 'both'].includes(TARGET)) {
+  throw new Error('--target must be one of: preset, profile, both')
+}
 // Each target defaults to the profile it belongs to; an explicit --profile wins
 // for both. Web is the only profile served by presets, and headless is where a
 // preset-free patch was historically installed.
@@ -575,8 +580,7 @@ async function applyProfile() {
   }
 
   const summary = []
-  for (const [path, edits] of updates) {
-    const reports = await updateProfileFile(path, edits, { dryRun: DRY_RUN })
+  for (const [path, reports] of await updateProfileFiles(updates, { dryRun: DRY_RUN })) {
     for (const { label, ids, notes } of reports) {
       const detail = notes.length === 0 ? '' : ` — ${notes.join('; ')}`
       summary.push(`  ${label}: ${ids.join(', ')} in ${path}${detail}`)
