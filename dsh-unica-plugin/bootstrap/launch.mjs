@@ -331,6 +331,8 @@ async function installArtifact(name) {
   } catch (error) {
     await rm(scratch, { recursive: true, force: true })
     await rm(assetPath, { force: true })
+    // Another launcher may have finished the same cold download while ours failed.
+    if (error.transient && ready(entry)) return entry
     const message = `cannot download ${entry.descriptor.asset.url}: ${error.message}. First start needs network; a proxy or a blocked host shows up here.`
     throw Object.assign(new Error(message, { cause: error }), { transient: error.transient === true })
   }

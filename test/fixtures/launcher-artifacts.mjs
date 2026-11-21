@@ -1,6 +1,6 @@
 import childProcess from 'node:child_process'
 import fs from 'node:fs'
-import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { syncBuiltinESMExports } from 'node:module'
 import { basename, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -26,6 +26,11 @@ if (basename(process.argv[1] ?? '') === 'launch.mjs') {
   let engineAttempts = 0
   globalThis.fetch = async (url) => {
     if (url.endsWith('/core.tar.gz')) {
+      if (existsSync('fail-core')) {
+        writeFileSync('core-requested', '')
+        while (!existsSync('release-failure')) await delay(10)
+        return new Response(null, { status: 503 })
+      }
       appendFileSync(join(root, 'core-attempts'), String(process.pid) + '\n')
       while (!existsSync(join(root, 'release-core'))) await delay(10)
       return new Response(readFileSync(join(root, 'core.tar.gz')))
