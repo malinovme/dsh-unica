@@ -69,6 +69,7 @@ for (const required of [
   'installer/profile-patch.mjs',
   'installer/profile-file.mjs',
   'bootstrap/launch.mjs',
+  'bootstrap/artifact-delivery.mjs',
   'host/index.js',
   'host/selftest.js',
   'runtime-manifest.json',

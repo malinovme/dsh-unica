@@ -33,6 +33,8 @@ jobs:
         run: node --test test/relay-output.test.mjs test/engine-permissions.test.mjs
       - name: Check profile reinstallation and rollback across installer targets
         run: node --test test/profile-ids.test.mjs test/profile-patch.test.mjs test/installer-targets.test.mjs
+      - name: Check required artifact delivery module in the release package
+        run: node --test test/package.test.mjs
 
   price-extension:
     name: Price calculator tutorial (${{ matrix.os }})
