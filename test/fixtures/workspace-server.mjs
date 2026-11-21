@@ -64,6 +64,15 @@ for await (const line of createInterface({ input: process.stdin })) {
       console.log(JSON.stringify({ jsonrpc: '2.0', id, result: { structuredContent: { mode: process.env.UNICA_ARTIFACT_DELIVERY } } }))
       continue
     }
+    if (params.name === 'unica.view' && process.env.FIXTURE_VIEW_ERROR) {
+      const result = { isError: true, content: [{ type: 'text', text: process.env.FIXTURE_VIEW_ERROR }] }
+      console.log(JSON.stringify({ jsonrpc: '2.0', id, result }))
+      continue
+    }
+    if (params.name === 'unica.view' && process.env.FIXTURE_NO_ROOT) {
+      console.log(JSON.stringify({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: '{}' }] } }))
+      continue
+    }
     if (params.name === 'hold') continue
     if (params.name === 'history') {
       console.log(JSON.stringify({ jsonrpc: '2.0', id, result: { calls, cancelled } }))

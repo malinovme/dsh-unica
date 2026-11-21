@@ -489,6 +489,13 @@ jobs:
           node-version: '24'
       - name: Recover catalog registration and cancel probes on unload
         run: node --test test/catalog.test.mjs test/artifact-delivery.test.mjs
+      - name: Install DSH for verification tests
+        shell: bash
+        run: npm install --no-save --no-package-lock --prefix "$RUNNER_TEMP/dsh-verify" @deepseek-ai/dsh@0.2.2-rc.1
+      - name: Verification, cancellation and profile regression tests on Windows
+        env:
+          DSH_INSTALL_ROOT: ${{ runner.temp }}/dsh-verify
+        run: node --test test/verify.test.mjs
       - name: Release upgrade and rollback in Windows PowerShell
         run: node --test test/update.test.mjs
       - name: Native MCP process and workspace pool integration on Windows

@@ -7,6 +7,8 @@
 import { resolveConfig } from './lib/config.js'
 import { canonicalCwd } from './lib/pool.js'
 import { UnicaProc } from './lib/proc.js'
+import { loadCatalog } from './lib/catalog.js'
+import { resultText } from './lib/render.js'
 
 const args = process.argv.slice(2)
 const flag = (name) => {
@@ -27,15 +29,18 @@ const config = resolveConfig({
   defaultCwd: cwd,
   coldStartTimeoutMs: coldStartTimeout === undefined ? undefined : Number(coldStartTimeout),
   startupTimeoutMs: startupTimeout === undefined ? undefined : Number(startupTimeout),
+  ...JSON.parse(flag('--config-json') ?? '{}'),
 })
 const proc = new UnicaProc({ cwd, config, log: { info() {}, warn: console.error, error: console.error } })
 const startedAt = Date.now()
 
 try {
+  if (config.probeCwd && config.probeCwd !== cwd) await loadCatalog(config)
   await proc.start()
   const tools = await proc.listTools({ timeoutMs: config.startupTimeoutMs })
-  const view = await proc.callTool('unica.view', {}, { timeoutMs: 60_000 })
+  const view = await proc.callTool('unica.view', {})
   const text = (view.content ?? []).find((block) => block?.type === 'text')?.text ?? ''
+  if (view.isError === true) throw new Error(`unica.view failed: ${resultText(view) || 'tool returned isError'}`)
   let root
   try {
     root = JSON.parse(text)?.data?.workspaceRoot

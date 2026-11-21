@@ -106,27 +106,35 @@ async function publishProfiles(changes) {
   }
 }
 
-export async function updateProfileFiles(updates, { dryRun = false } = {}) {
+export async function prepareProfileFiles(updates) {
   const profiles = new Map()
   const reports = new Map()
+  const targets = new Map()
   for (const [path, edits] of updates) {
     // Two profile names may be symlinks to the same managed patch.
     const target = await destination(path)
     if (!profiles.has(target)) profiles.set(target, await readProfile(target))
     const profile = profiles.get(target)
+    targets.set(path, profile)
     const entries = []
     for (const edit of edits) {
       const result = editProfilePatch(profile.content, edit)
       profile.content = result.content
-      entries.push({ label: edit.label, ids: result.ids, notes: result.notes })
+      entries.push({ label: edit.label, ids: result.ids, notes: result.notes, customBridgeId: result.customBridgeId })
     }
     reports.set(path, entries)
   }
-  if (!dryRun) {
+  async function publish() {
     const changed = [...profiles.values()].filter(p => p.content !== (p.original?.toString('utf8') ?? ''))
     await publishProfiles(changed)
   }
-  return reports
+  return { reports, targets, publish }
+}
+
+export async function updateProfileFiles(updates, options) {
+  const plan = await prepareProfileFiles(updates)
+  if (!options?.dryRun) await plan.publish()
+  return plan.reports
 }
 
 export async function updateProfileFile(path, edits, options) {
