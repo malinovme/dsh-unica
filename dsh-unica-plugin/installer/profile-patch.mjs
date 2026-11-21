@@ -284,6 +284,7 @@ export function editProfilePatch(raw, { banner = '', block, legacyIds = [] }) {
   const ids = rows.map((row) => /^- id: (\S+)$/m.exec(row)[1])
 
   let text = existing
+  let customBridgeId
   const notes = []
   // A native-only release replaces the old MCP row: leaving it would register a
   // second set of tools under the same names.
@@ -311,7 +312,9 @@ export function editProfilePatch(raw, { banner = '', block, legacyIds = [] }) {
       text = deduped
       notes.push(`${id}: replaced a top-level entry, which a patch cannot declare`)
     }
-    rows[i] = preserveBridgeOptions(rows[i], annotation.previous, id)
+    const merged = preserveBridgeOptions(rows[i], annotation.previous, id)
+    if (merged !== rows[i]) customBridgeId = id
+    rows[i] = merged
     if (annotation.comment) rows[i] = rows[i].replace(/^[^\n]+/, line => line + '  ' + annotation.comment)
   }
 
@@ -320,5 +323,5 @@ export function editProfilePatch(raw, { banner = '', block, legacyIds = [] }) {
   text = removeEmptyInserts(text).text
   if (existing.trim() === '') text = `${banner}${text}`
 
-  return { content: eol === '\r\n' ? text.replace(/\n/g, '\r\n') : text, ids, notes }
+  return { content: eol === '\r\n' ? text.replace(/\n/g, '\r\n') : text, ids, notes, customBridgeId }
 }

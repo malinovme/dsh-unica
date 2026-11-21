@@ -41,7 +41,9 @@ import { spawn } from 'node:child_process'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { indentBlock } from './installer/profile-patch.mjs'
-import { updateProfileFiles } from './installer/profile-file.mjs'
+import { prepareProfileFiles } from './installer/profile-file.mjs'
+import { loadYaml, yamlWithJsTag } from './tools/lib/yaml.mjs'
+import { resolveConfig } from './host/lib/config.js'
 import { harnessAsar, harnessRoots, readAsarFile } from './tools/lib/harness.mjs'
 
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)))
@@ -196,20 +198,23 @@ function coreReady(runtimes) {
  *
  * @returns `{ ok, tools, server, root, stderr, ms }`
  */
-function nativeSelftest(cache) {
-  const budget = coreReady(cache.runtimes) ? SMOKE_TIMEOUT_MS : COLD_TIMEOUT_MS
-  if (budget === COLD_TIMEOUT_MS) {
+function nativeSelftest(rawConfig) {
+  const cached = coreReady(rawConfig.runtimeCacheDir)
+  const config = resolveConfig({
+    startupTimeoutMs: SMOKE_TIMEOUT_MS,
+    coldStartTimeoutMs: cached ? SMOKE_TIMEOUT_MS : COLD_TIMEOUT_MS,
+    ...rawConfig,
+  })
+  // Each MCP phase enforces its own configured timeout; the outer timer is a backstop.
+  const probeBudget = config.coldStartTimeoutMs + 2 * config.startupTimeoutMs
+  const budget = Math.min(2 ** 31 - 1, (config.probeCwd ? 2 : 1) * probeBudget + config.toolCallTimeoutMs + 5000)
+  if (!cached) {
     console.log(`  runtime       : not cached yet — downloading and verifying it first, this can take minutes`)
   }
   const args = [join(PLUGIN_ROOT, 'host', 'selftest.js'), '--cwd', VERIFY_CWD,
-    '--startup-timeout-ms', String(SMOKE_TIMEOUT_MS), '--cold-start-timeout-ms', String(budget)]
+    '--config-json', JSON.stringify(config)]
   return new Promise((resolve) => {
     const child = spawn(process.execPath, args, {
-      env: {
-        ...process.env,
-        UNICA_RUNTIME_CACHE_DIR: cache.runtimes,
-        UNICA_PROVIDER_STATE_DIR: cache.state,
-      },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let stdout = ''
@@ -280,16 +285,22 @@ const NATIVE_ENTRY = pathToFileURL(join(PLUGIN_ROOT, 'host', 'index.js')).href
  * working directory per call from the session, so there is no `cwd` here and no
  * workspace pin anywhere in the profile.
  */
+function nativeConfig() {
+  return {
+    pluginRoot: PLUGIN_ROOT,
+    runtimeCacheDir: CACHE.runtimes,
+    providerStateDir: CACHE.state,
+    maxProcesses: 4,
+    idleMs: 600000,
+    toolCallTimeoutMs: 600000,
+  }
+}
+
 function nativeRow() {
   return `- id: unica-native
   name: ${JSON.stringify(NATIVE_ENTRY)}
   config:
-    pluginRoot: ${JSON.stringify(PLUGIN_ROOT)}
-    runtimeCacheDir: ${JSON.stringify(CACHE.runtimes)}
-    providerStateDir: ${JSON.stringify(CACHE.state)}
-    maxProcesses: 4
-    idleMs: 600000
-    toolCallTimeoutMs: 600000
+${Object.entries(nativeConfig()).map(([key, value]) => '    ' + key + ': ' + JSON.stringify(value)).join('\n')}
 `
 }
 
@@ -575,7 +586,7 @@ function templateRows(templateText) {
   return `${rows}\n`
 }
 
-function planProfile() {
+async function planProfile() {
   const updates = new Map()
   function add(profile, label, block) {
     const path = join(DSH_HOME, 'profiles', profile, 'cordis.patch.yml')
@@ -590,19 +601,58 @@ function planProfile() {
     add(PRESET_PROFILE, 'agent preset', presetRow(templateRows(template.text)))
   }
 
-  return { updates, template }
+  return { ...await prepareProfileFiles(updates), template }
 }
 
-async function applyProfile({ updates, template }) {
+// Only customized bridge rows require YAML decoding. A fresh, standalone install
+// can verify its generated settings without a DSH installation or a YAML parser.
+async function verifyProfile(plan) {
+  const seen = new Set()
+  let verified
+  for (const [path, edits] of plan.reports) {
+    let rows
+    for (const { customBridgeId, label } of edits) {
+      let config = nativeConfig()
+      if (customBridgeId) {
+        if (!rows) {
+          const yaml = loadYaml()
+          const patch = yaml.load(plan.targets.get(path).content, { schema: yamlWithJsTag(yaml) })
+          rows = patch.flatMap(entry => entry?.insert ?? [])
+        }
+        const row = rows.find(entry => entry?.id === customBridgeId)
+        config = customBridgeId === PRESET_ROW_ID
+          ? row.config.plugins.find(entry => entry?.id === 'unica-native').config
+          : row.config
+        for (const [key, value] of Object.entries(config)) {
+          if (value && typeof value === 'object' && '$js' in value) {
+            throw new Error(`cannot verify dynamic !!js option ${key} in ${path} outside DSH`)
+          }
+        }
+      }
+      const key = JSON.stringify(config)
+      if (seen.has(key)) continue
+      seen.add(key)
+      verified = await nativeSelftest(config)
+      if (!verified.ok) {
+        verified.stderr = `${label} in ${path}: ${verified.stderr}`
+        return verified
+      }
+    }
+  }
+  return verified
+}
+
+async function applyProfile({ reports, template, publish }) {
+  if (!DRY_RUN) await publish()
   const summary = []
-  for (const [path, reports] of await updateProfileFiles(updates, { dryRun: DRY_RUN })) {
-    for (const { label, ids, notes } of reports) {
+  for (const [path, entries] of reports) {
+    for (const { label, ids, notes } of entries) {
       const detail = notes.length === 0 ? '' : ` — ${notes.join('; ')}`
       summary.push(`  ${label}: ${ids.join(', ')} in ${path}${detail}`)
     }
   }
   if (template) summary.push(`  preset template: ${template.path}`)
-  return { summary, paths: [...updates.keys()] }
+  return { summary, paths: [...reports.keys()] }
 }
 
 async function main() {
@@ -610,7 +660,7 @@ async function main() {
   if (skillsCount === 0) throw new Error(`no bundled skills found at ${SKILLS} — run build-skills.mjs first`)
   if (!existsSync(LAUNCH.exe)) throw new Error(`unica bootstrap for ${LAUNCH.platform}/${LAUNCH.arch} not found at ${LAUNCH.exe}`)
 
-  let plan = planProfile()
+  let plan = await planProfile()
 
   // `--verify` is what turns "the files were written" into "the tools work".
   // Only the self-test proves the last one, and a refused cache directory is the
@@ -619,19 +669,17 @@ async function main() {
   let verified
   let relocated = false
   if (VERIFY && !DRY_RUN) {
-    verified = await nativeSelftest(CACHE)
+    verified = await verifyProfile(plan)
     // Only a refused cache is repaired, and the refusal is what tells us so: a
     // download that merely ran long must not move the cache behind the user's
     // back, or the runtime would be fetched twice.
     if (!verified.ok && CACHE_ARG === undefined && isAccessRefusal(verified, CACHE)) {
       const fallback = cachePaths(relocationTarget())
       console.log(`\nthe default cache refused access — testing ${fallback.runtimes}`)
-      verified = await nativeSelftest(fallback)
-      if (verified.ok) {
-        CACHE = fallback
-        plan = planProfile()
-        relocated = true
-      }
+      CACHE = fallback
+      plan = await planProfile()
+      verified = await verifyProfile(plan)
+      relocated = verified.ok
     }
     if (!verified.ok) {
       const reason = verified.stderr.trim().split('\n').at(-1) || `self-test exited with code ${verified.code ?? 'unknown'}`

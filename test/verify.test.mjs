@@ -14,7 +14,7 @@ const fixture = join(import.meta.dirname, 'fixtures/workspace-server.mjs')
 const fakeServer = JSON.stringify([process.execPath, fixture])
 
 function tempDir(t) {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'unica-verify-test-')))
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'unica-verify-test-')))
   t.after(() => rmSync(dir, { recursive: true, force: true }))
   return dir
 }
@@ -36,6 +36,57 @@ test('cold install uses its cold-start deadline for initialize', (t) => {
   })
   assert.equal(result.status, 0, result.stdout + result.stderr)
   assert.match(result.stdout, /ok +serverInfo workspace-fixture/)
+})
+
+test('manual verification uses each merged bridge config before publishing either target', t => {
+  const home = tempDir(t)
+  const standard = join(home, 'standard.yml')
+  writeFileSync(standard, [
+    '- insert:', '    - id: preset-standard', '      config:', '        plugins:',
+    '          - id: persona', '            config:', '              suffix: Your working directory is {{cwd}}.',
+  ].join('\n'))
+  const args = ['--dsh-home', home, '--standard', standard, '--verify-cwd', home]
+  const install = (...flags) => run(join(plugin, 'install.mjs'), [...args, ...flags])
+  const initial = install('--target', 'preset')
+  assert.equal(initial.status, 0, initial.stdout + initial.stderr)
+  const preset = join(home, 'profiles/web/cordis.patch.yml')
+  const standalone = join(home, 'profiles/headless/cordis.patch.yml')
+  const original = readFileSync(preset, 'utf8')
+  for (const [option, diagnostic] of [
+    ['nodePath: ' + JSON.stringify(join(home, 'deleted-node')), /deleted-node.*ENOENT/i],
+    ['maxProcesses: 0', /maxProcesses must be a positive integer/],
+    ['nodePath: !!js process.execPath', /cannot verify dynamic !!js option nodePath/],
+  ]) {
+    const customized = original.replace('maxProcesses: 4', option)
+    assert.notEqual(customized, original)
+    writeFileSync(preset, customized)
+    const checked = install('--target', 'both', '--verify')
+    assert.notEqual(checked.status, 0)
+    assert.match(checked.stdout + checked.stderr, diagnostic)
+    assert.equal(readFileSync(preset, 'utf8'), customized)
+    assert.equal(existsSync(standalone), false)
+  }
+  const valid = original.replace('maxProcesses: 4', 'nodePath: ' + JSON.stringify(process.execPath))
+  writeFileSync(preset, valid)
+  const checked = install('--target', 'both', '--verify')
+  assert.equal(checked.status, 0, checked.stdout + checked.stderr)
+  assert.ok(readFileSync(preset, 'utf8').includes('nodePath: ' + JSON.stringify(process.execPath)))
+  assert.ok(existsSync(standalone))
+})
+
+test('manual verification rejects an explicit tool error but accepts a successful view without a root', t => {
+  const home = tempDir(t)
+  const patch = join(home, 'profiles/headless/cordis.patch.yml')
+  const verify = env => run(join(plugin, 'install.mjs'),
+    ['--dsh-home', home, '--target', 'profile', '--verify', '--verify-cwd', home], env)
+  const failed = verify({ FIXTURE_VIEW_ERROR: 'fixture workspace unavailable' })
+  assert.equal(failed.status, 1)
+  assert.match(failed.stdout + failed.stderr, /unica.view failed: fixture workspace unavailable/)
+  assert.equal(existsSync(patch), false)
+  const ok = verify({ FIXTURE_NO_ROOT: '1' })
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr)
+  assert.match(ok.stdout, /reported no root/)
+  assert.ok(existsSync(patch))
 })
 
 test('cancelled calls never reach the server and in-flight cancellations identify the request', async (t) => {
