@@ -1,17 +1,26 @@
 import childProcess from 'node:child_process'
+import fs from 'node:fs'
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import { syncBuiltinESMExports } from 'node:module'
 import { basename, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 if (basename(process.argv[1] ?? '') === 'launch.mjs') {
-  const { root, server, mode } = JSON.parse(process.env.UNICA_TEST_ARTIFACTS)
+  const { root, server, mode, deniedPath } = JSON.parse(process.env.UNICA_TEST_ARTIFACTS)
   // The real launcher verifies and unpacks the archive. Replace its dummy
   // executable with the portable MCP fixture when it is time to start it.
   const spawn = childProcess.spawn
   childProcess.spawn = (command, args, options) => basename(command) === 'fixture-runtime'
     ? spawn(process.execPath, [server], options)
     : spawn(command, args, options)
+  if (mode === 'unreadable') {
+    // Inject a permission error for one already-published engine on every OS.
+    const stat = fs.statSync
+    fs.statSync = (file, ...args) => {
+      if (file === deniedPath) throw Object.assign(new Error('EACCES: cannot stat ' + file), { code: 'EACCES' })
+      return stat(file, ...args)
+    }
+  }
   syncBuiltinESMExports()
 
   let engineAttempts = 0

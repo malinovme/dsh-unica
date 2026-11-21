@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmod, copyFile, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
@@ -34,8 +34,7 @@ async function setup(t, name) {
     return executable
   }
 
-  await mkdir(join(root, 'bootstrap'))
-  await copyFile(new URL('../dsh-unica-plugin/bootstrap/launch.mjs', import.meta.url), join(root, 'bootstrap/launch.mjs'))
+  await cp(new URL('../dsh-unica-plugin/bootstrap/', import.meta.url), join(root, 'bootstrap'), { recursive: true })
   const server = new URL('./fixtures/workspace-server.mjs', import.meta.url)
   const core = '#!/usr/bin/env node\nimport ' + JSON.stringify(server.href) + '\n'
   await cacheArtifact('unica', { asset: { sha256: sha256(core) }, entrypoint: 'core.mjs' }, core, 0o700)
