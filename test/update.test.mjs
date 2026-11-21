@@ -3,11 +3,12 @@ import { execFile, execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
+import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
 const run = promisify(execFile)
@@ -66,6 +67,7 @@ for (const wrapper of ['sh', 'ps1']) {
       'checksum-mismatch', 'corrupt', 'missing-installer', 'failed-upgrade', 'failed-first-install',
       'first-install', 'success', 'unrelated-directory', 'update-in-progress', 'interrupted-after-backup',
       'killed-updater', 'committed-update', 'edited-during-update', 'interrupted-publication',
+      'late-conflict-first-install', 'late-conflict-upgrade', 'unchanged-profile', 'interrupted-publication-conflict',
       'legacy-profile-conflict', wrapper === 'ps1' ? 'reused-pid' : 'claim-collision',
     ]
     if (wrapper === 'ps1') scenarios.push('legacy-recovery-without-draft')
@@ -82,7 +84,7 @@ for (const wrapper of ['sh', 'ps1']) {
           await writeFile(join(transaction, 'owner'), 'another updater')
         }
         await mkdir(dir, { recursive: true })
-        if (!['first-install', 'failed-first-install'].includes(scenario)) {
+        if (!scenario.endsWith('first-install')) {
           await mkdir(dirname(profile), { recursive: true })
           await writeFile(profile, oldProfile)
           await mkdir(install)
@@ -102,6 +104,35 @@ for (const wrapper of ['sh', 'ps1']) {
           '-Profile', 'web', '-DshHome', home, '-NoVerify',
         ]
         const retry = extra => run(command, args, { env: { ...env, ...extra }, timeout: 30_000 })
+        if (scenario.startsWith('late-conflict-')) {
+          const preload = pathToFileURL(join(import.meta.dirname, 'fixtures', 'edit-before-profile-publication.mjs'))
+          const update = retry({
+            NODE_OPTIONS: [process.env.NODE_OPTIONS, '--import=' + preload.href].filter(Boolean).join(' '),
+            FIXTURE_PROFILE: profile, FIXTURE_TRANSACTION: transaction, FIXTURE_EDIT: editedProfile,
+          })
+          await assert.rejects(update, /profile changed during update/i)
+          assert.equal(await readFile(profile, 'utf8'), editedProfile)
+          if (scenario === 'late-conflict-upgrade') {
+            assert.equal(await readFile(join(install, 'install.mjs'), 'utf8'), '// old installer')
+            assert.equal(await readFile(join(install, 'old.txt'), 'utf8'), 'old')
+          } else {
+            await assert.rejects(readdir(install), { code: 'ENOENT' })
+          }
+          await assert.rejects(readdir(transaction), { code: 'ENOENT' })
+          return
+        }
+        if (scenario === 'unchanged-profile') {
+          await retry({})
+          assert.equal(await readFile(profile, 'utf8'), install)
+          await utimes(profile, new Date(0), new Date(0))
+          const before = await stat(profile, { bigint: true })
+          await retry({})
+          const after = await stat(profile, { bigint: true })
+          assert.equal(after.ino, before.ino, 'reinstallation must keep the existing profile file')
+          assert.equal(after.mtimeNs, before.mtimeNs, 'reinstallation must not write to the profile')
+          assert.equal(await readFile(profile, 'utf8'), install)
+          return
+        }
         if (scenario === 'busy-previous-at-commit') {
           const hold = join(dir, 'installer-ready')
           const ready = join(dir, 'backup-open')
@@ -176,7 +207,7 @@ for (const wrapper of ['sh', 'ps1']) {
           }
           await rm(hold, { force: true })
         }
-        const publishing = ['interrupted-publication', 'legacy-recovery-without-draft', 'locked-draft-during-recovery'].includes(scenario)
+        const publishing = ['interrupted-publication', 'interrupted-publication-conflict', 'legacy-recovery-without-draft', 'locked-draft-during-recovery'].includes(scenario)
         if (publishing || ['interrupted-after-backup', 'committed-update', 'reused-pid', 'legacy-profile-conflict'].includes(scenario)) {
           // Durable on-disk states immediately after the first rename, or
           // after committing a successful update but before cleanup.
@@ -211,6 +242,14 @@ for (const wrapper of ['sh', 'ps1']) {
             await mkdir(install)
             await writeFile(join(install, 'install.mjs'), entrypoint)
             await writeFile(join(install, 'package.json'), '{"name":"dsh-plugin-unica"}')
+            if (scenario === 'interrupted-publication-conflict') {
+              await writeFile(profile, editedProfile)
+              await assert.rejects(retry({}), /profile changed during update/i)
+              assert.equal(await readFile(profile, 'utf8'), editedProfile)
+              assert.equal(await readFile(join(install, 'old.txt'), 'utf8'), 'old')
+              await assert.rejects(readdir(transaction), { code: 'ENOENT' })
+              return
+            }
             if (scenario === 'locked-draft-during-recovery') {
               // Allow publication to read the draft, but interrupt cleanup before it can delete it.
               await assert.rejects(run(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', `
