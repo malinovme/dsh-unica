@@ -426,7 +426,7 @@ jobs:
           node-version: '24'
 
       - name: Release upgrade and rollback
-        run: node --test test/update.test.mjs
+        run: node --test test/update.test.mjs test/release-source.test.mjs
 
       - name: Build and serve both archive shapes
         run: |
@@ -490,6 +490,6 @@ jobs:
       - name: Recover catalog registration and cancel probes on unload
         run: node --test test/catalog.test.mjs test/artifact-delivery.test.mjs
       - name: Release upgrade and rollback in Windows PowerShell
-        run: node --test test/update.test.mjs
+        run: node --test test/update.test.mjs test/release-source.test.mjs
       - name: Native MCP process and workspace pool integration on Windows
         run: node --test test/native-bridge.test.mjs

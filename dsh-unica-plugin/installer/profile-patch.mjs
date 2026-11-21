@@ -20,20 +20,33 @@ function findEntryEnd(lines, at) {
   return lines.length
 }
 
-/** Match an id row without interpreting any other YAML content. */
-function idRow(line, indent, id) {
-  const prefix = `${indent}- id:`
-  if (!line.startsWith(prefix)) return undefined
-  const value = line.slice(prefix.length).match(/^\s+(?:'([^']*)'|"([^"]*)"|([^\s#]+))(?:\s+(#.*))?\s*$/)
-  if (!value || (value[1] ?? value[2] ?? value[3]) !== id) return undefined
-  return { comment: value[4] }
+/** Locate the id at the mapping level of a sequence item. */
+function idRow(lines, at, indent, id) {
+  const first = lines[at]
+  if (!first.startsWith(indent + '- ')) return undefined
+  const content = first.slice(indent.length).match(/^-( +)(.*)$/)
+  const width = indent.length + 1 + content[1].length
+  for (let i = at; i < lines.length; i++) {
+    const line = lines[i]
+    if (i > at) {
+      if (!line.trim() || line.trimStart().startsWith('#')) continue
+      if (indentWidth(line) < width) break
+      if (indentWidth(line) !== width) continue
+    }
+    const field = i === at ? content[2] : line.trimStart()
+    if (!field.startsWith('id:')) continue
+    const value = field.slice(3).match(/^\s+(?:'([^']*)'|"([^"]*)"|([^\s#]+))(?:\s+(#.*))?\s*$/)
+    if (value && (value[1] ?? value[2] ?? value[3]) === id) return { comment: value[4] }
+    return undefined
+  }
 }
 
 // Walk only direct children of a block. Deeper lines can contain arbitrary
 // YAML, including persona text that happens to look like a bridge row.
 function children(lines, parent) {
   if (parent === undefined) return []
-  const width = indentWidth(lines[parent])
+  const line = lines[parent]
+  const width = line.match(/^( *- +)/)?.[1].length ?? indentWidth(line)
   const result = []
   let childWidth
   for (let i = parent + 1; i < lines.length; i++) {
@@ -49,12 +62,22 @@ function children(lines, parent) {
 
 function nativeConfig(lines, id) {
   function field(parent, key) {
-    return children(lines, parent).find(i => lines[i].trim().replace(/\s+#.*$/, '') === key + ':')
+    if (parent === undefined) return undefined
+    const start = lines[parent].match(/^( *- +)(.*)$/)
+    const matches = value => value.trim().replace(/\s+#.*$/, '') === key + ':'
+    if (!start) return children(lines, parent).find(i => matches(lines[i]))
+    if (matches(start[2])) return parent
+    for (let i = parent + 1; i < lines.length; i++) {
+      if (!lines[i].trim() || lines[i].trimStart().startsWith('#')) continue
+      const indent = indentWidth(lines[i])
+      if (indent < start[1].length) break
+      if (indent === start[1].length && matches(lines[i])) return i
+    }
   }
   if (id === 'unica-native') return field(0, 'config')
   if (id === 'preset-unica-1c') {
     const plugins = field(field(0, 'config'), 'plugins')
-    const bridge = children(lines, plugins).find(i => idRow(lines[i].trimStart(), '', 'unica-native'))
+    const bridge = children(lines, plugins).find(i => idRow(lines, i, ' '.repeat(indentWidth(lines[i])), 'unica-native'))
     return field(bridge, 'config')
   }
 }
@@ -121,7 +144,7 @@ function removeTopLevelEntries(text, id, annotation) {
   const kept = []
   let removed = false
   for (let i = 0; i < lines.length; i++) {
-    const match = idRow(lines[i], '', id)
+    const match = idRow(lines, i, '', id)
     if (!match) {
       kept.push(lines[i])
       continue
@@ -181,7 +204,7 @@ function removeInsertChild(text, id, annotation) {
     const indent = ' '.repeat(width)
     const kept = []
     for (let j = 0; j < payload.length; j += 1) {
-      const match = width > 0 && idRow(payload[j], indent, id)
+      const match = width > 0 && idRow(payload, j, indent, id)
       if (match) {
         const start = j
         kept.push(...retainComment(match, indent, annotation))

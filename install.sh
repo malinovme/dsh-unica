@@ -189,6 +189,7 @@ fi
 # this script goes stale silently, and the failure would surface as a download
 # error on a tag that used to exist. A pinned UNICA_VERSION skips the lookup,
 # which is also what makes this work offline against a mirror.
+VERSION=""
 if [ -n "${UNICA_VERSION:-}" ]; then
   VERSION="$UNICA_VERSION"
 elif [ -n "${UNICA_BASE_URL:-}" ]; then

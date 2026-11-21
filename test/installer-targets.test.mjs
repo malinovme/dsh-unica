@@ -176,3 +176,18 @@ test('reinstall from a new plugin root retains distinct host and preset bridge s
   install(movedInstaller, newCache)
   assert.equal(await readFile(profile, 'utf8'), updated)
 })
+
+test('valued installer options reject a missing argument before writing', async t => {
+  const home = await tempHome(t)
+  for (const args of [['--profile', '--verify'], ['--standard'], ['--cache-dir='], ['--arch', '--dry-run']]) {
+    const result = spawnSync(process.execPath, [installer, '--dsh-home', home, ...args], { encoding: 'utf8' })
+    assert.equal(result.status, 1, result.stdout + result.stderr)
+    assert.ok(result.stderr.includes(args[0].split('=')[0] + ' requires a value'), result.stderr)
+    assert.deepEqual(await readdir(home), [])
+  }
+  for (const profile of [['--profile=shared'], ['--profile', 'shared']]) {
+    const result = spawnSync(process.execPath, [installer, '--target', 'profile', '--dsh-home', home, ...profile], { encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+    assert.ok(existsSync(join(home, 'profiles/shared/cordis.patch.yml')))
+  }
+})

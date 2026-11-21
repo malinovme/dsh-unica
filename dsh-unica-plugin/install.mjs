@@ -50,11 +50,22 @@ const PRESET_ID = 'unica-1c'
 const PRESET_ROW_ID = `preset-${PRESET_ID}`
 const PRESET_ROW_NAME = '@deepseek-ai/dsh-agent-preset'
 
+const valuedFlags = new Set(['--dsh-home', '--target', '--profile', '--platform', '--arch', '--cache-dir', '--verify-cwd', '--workspace', '--standard'])
+const values = new Map()
+for (let i = 2; i < process.argv.length; i++) {
+  const token = process.argv[i]
+  const equals = token.indexOf('=')
+  const flag = equals < 0 ? token : token.slice(0, equals)
+  if (!valuedFlags.has(flag)) continue
+  const value = equals < 0 ? process.argv[++i] : token.slice(equals + 1)
+  if (!value || (equals < 0 && value.startsWith('--'))) {
+    const hint = flag === '--target' ? ' (preset, profile, both)' : ''
+    throw new Error(flag + ' requires a value' + hint)
+  }
+  if (!values.has(flag)) values.set(flag, value)
+}
 function arg(name, fallback) {
-  const flag = `--${name}`
-  const i = process.argv.findIndex(value => value === flag || value.startsWith(flag + '='))
-  if (i === -1) return fallback
-  return process.argv[i] === flag ? process.argv[i + 1] : process.argv[i].slice(flag.length + 1)
+  return values.get('--' + name) ?? fallback
 }
 const DRY_RUN = process.argv.includes('--dry-run')
 const VERIFY = process.argv.includes('--verify')

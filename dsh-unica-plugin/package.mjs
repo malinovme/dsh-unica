@@ -8,13 +8,19 @@
 // stays out is only what is machine-specific or regenerable: `node_modules`, the
 // build report, and the archive's own output.
 import { createHash } from 'node:crypto'
-import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
 const PLUGIN_ROOT = resolve(import.meta.dirname ?? '.')
 const outArg = process.argv.indexOf('--out')
-const OUT = resolve(outArg === -1 ? join(PLUGIN_ROOT, '..', 'dsh-plugin-unica.tar.gz') : process.argv[outArg + 1])
+const requested = resolve(outArg === -1 ? join(PLUGIN_ROOT, '..', 'dsh-plugin-unica.tar.gz') : process.argv[outArg + 1])
+
+await mkdir(dirname(requested), { recursive: true })
+const OUT = join(await realpath(dirname(requested)), basename(requested))
+const manifestPath = OUT + '.sha256.json'
+const stage = OUT + '.packaging'
+const excludedPaths = new Set([OUT, manifestPath, stage])
 
 // Only machine-specific and regenerable paths are excluded. install.mjs rewrites
 // every absolute path for the target machine anyway, so nothing here is needed
@@ -48,6 +54,7 @@ if ((await readFile(join(PLUGIN_ROOT, 'bootstrap', 'launch.mjs'), 'utf8')).inclu
 async function* walk(dir, rel = '') {
   for (const e of await readdir(dir, { withFileTypes: true })) {
     const abs = join(dir, e.name)
+    if (excludedPaths.has(abs)) continue
     const r = rel === '' ? e.name : `${rel}/${e.name}`
     if (e.isDirectory()) {
       if (EXCLUDE_DIRS.has(e.name) || isOsMetadata(e.name)) continue
@@ -58,81 +65,99 @@ async function* walk(dir, rel = '') {
   }
 }
 
-const files = []
-for await (const f of walk(PLUGIN_ROOT)) files.push(f)
-files.sort((a, b) => a.rel.localeCompare(b.rel))
-
-// An archive that cannot start its bridge is worse than no archive, so prove the
-// files the launcher and the Host plugin need are in it instead of assuming.
-for (const required of [
-  'install.mjs',
-  'installer/profile-patch.mjs',
-  'installer/profile-file.mjs',
-  'bootstrap/launch.mjs',
-  'bootstrap/artifact-delivery.mjs',
-  'host/index.js',
-  'host/selftest.js',
-  'runtime-manifest.json',
-  'tool-map.json',
-]) {
-  if (!files.some((f) => f.rel === required)) throw new Error(`refusing to package: ${required} is missing`)
+// Keep the candidate on the destination filesystem. Concurrent builds for the
+// same archive must not interleave publication of the archive and checksum.
+await mkdir(stage)
+try {
+  await build()
+} finally {
+  await rm(stage, { recursive: true, force: true })
 }
 
-let raw = 0
-for (const f of files) raw += (await stat(f.abs)).size
+async function build() {
+  const files = []
+  for await (const f of walk(PLUGIN_ROOT)) files.push(f)
+  files.sort((a, b) => a.rel.localeCompare(b.rel))
 
-const fileList = join(PLUGIN_ROOT, '.package-filelist.txt')
-await writeFile(fileList, `${files.map((f) => f.rel).join('\n')}\n`, 'utf8')
-await mkdir(dirname(OUT), { recursive: true })
-try {
-  execFileSync('tar', ['-czf', OUT, '-C', PLUGIN_ROOT, '-T', fileList], {
+  // An archive that cannot start its bridge is worse than no archive, so prove the
+  // files the launcher and the Host plugin need are in it instead of assuming.
+  for (const required of [
+    'install.mjs',
+    'installer/profile-patch.mjs',
+    'installer/profile-file.mjs',
+    'bootstrap/launch.mjs',
+    'bootstrap/artifact-delivery.mjs',
+    'host/index.js',
+    'host/selftest.js',
+    'runtime-manifest.json',
+    'tool-map.json',
+  ]) {
+    if (!files.some((f) => f.rel === required)) throw new Error(`refusing to package: ${required} is missing`)
+  }
+
+  let raw = 0
+  for (const f of files) raw += (await stat(f.abs)).size
+
+  const candidate = join(stage, 'archive.tar.gz')
+  const fileList = join(stage, 'files.txt')
+  await writeFile(fileList, files.map(f => f.rel).join('\n') + '\n')
+  execFileSync('tar', ['-czf', candidate, '-C', PLUGIN_ROOT, '-T', fileList], {
     stdio: 'inherit',
-    // bsdtar on macOS honours this and stops writing AppleDouble members; GNU tar
-    // on Linux ignores the variable, which is why it is set rather than branched
-    // on. Without it a Mac build adds a `._name` member per file — dead weight
-    // that also hides the drift from the manifest.
     env: { ...process.env, COPYFILE_DISABLE: '1' },
   })
-} finally {
-  await unlink(fileList)
-}
 
-// The write side is now guarded twice; this is the read-back that proves it. The
-// archive has to contain exactly the files the manifest will list, so a host whose
-// `tar` invents members fails here instead of at unpack time on a user's machine.
-const members = execFileSync('tar', ['-tzf', OUT], { encoding: 'utf8' })
-  .split('\n')
-  .map((line) => line.trim())
-  .filter((line) => line !== '')
-const noise = members.filter((member) => isOsMetadata(basename(member)))
-if (members.length !== files.length || noise.length > 0) {
-  await unlink(OUT)
-  throw new Error(
-    `refusing to publish: the archive has ${members.length} members but ${files.length} were packaged` +
-      (noise.length > 0 ? `, ${noise.length} of them OS metadata (e.g. ${noise[0]})` : ''),
-  )
-}
+  // The write side is now guarded twice; this is the read-back that proves it. The
+  // archive has to contain exactly the files the manifest will list, so a host whose
+  // `tar` invents members fails here instead of at unpack time on a user's machine.
+  const members = execFileSync('tar', ['-tzf', candidate], { encoding: 'utf8' })
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+  const noise = members.filter((member) => isOsMetadata(basename(member)))
+  if (members.length !== files.length || noise.length > 0) {
+    throw new Error(
+      `refusing to publish: the archive has ${members.length} members but ${files.length} were packaged` +
+        (noise.length > 0 ? `, ${noise.length} of them OS metadata (e.g. ${noise[0]})` : ''),
+    )
+  }
 
-const gz = await readFile(OUT)
-const sha = createHash('sha256').update(gz).digest('hex')
-const metadata = JSON.parse(await readFile(join(PLUGIN_ROOT, 'package.json'), 'utf8'))
-const manifest = {
-  archive: OUT,
-  sha256: sha,
-  bytes: gz.length,
-  uncompressedBytes: raw,
-  version: metadata.version,
-  upstreamVersion: metadata.unica?.upstreamVersion,
-  tools: metadata.unica?.tools,
-  skills: metadata.unica?.skills,
-  fileCount: files.length,
-  install: 'unpack, then: node install.mjs [--target preset|profile|both] [--verify]',
-  contents: files.map((f) => f.rel),
-}
-const manifestPath = `${OUT}.sha256.json`
-await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+  const gz = await readFile(candidate)
+  const sha = createHash('sha256').update(gz).digest('hex')
+  const metadata = JSON.parse(await readFile(join(PLUGIN_ROOT, 'package.json'), 'utf8'))
+  const manifest = {
+    archive: OUT,
+    sha256: sha,
+    bytes: gz.length,
+    uncompressedBytes: raw,
+    version: metadata.version,
+    upstreamVersion: metadata.unica?.upstreamVersion,
+    tools: metadata.unica?.tools,
+    skills: metadata.unica?.skills,
+    fileCount: files.length,
+    install: 'unpack, then: node install.mjs [--target preset|profile|both] [--verify]',
+    contents: files.map((f) => f.rel),
+  }
+  const newManifest = join(stage, 'manifest.json')
+  await writeFile(newManifest, JSON.stringify(manifest, null, 2) + '\n')
+  const backup = join(stage, 'previous-manifest.json')
+  let hadManifest = true
+  try {
+    await copyFile(manifestPath, backup)
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+    hadManifest = false
+  }
+  await rename(newManifest, manifestPath)
+  try {
+    await rename(candidate, OUT)
+  } catch (error) {
+    if (hadManifest) await rename(backup, manifestPath)
+    else await rm(manifestPath)
+    throw error
+  }
 
-console.log(`packaged ${files.length} files, ${(raw / 1048576).toFixed(2)} MB raw -> ${(gz.length / 1048576).toFixed(2)} MB gz`)
-console.log(`  archive : ${OUT}`)
-console.log(`  manifest: ${manifestPath}`)
-console.log(`  sha256  : ${sha}`)
+  console.log(`packaged ${files.length} files, ${(raw / 1048576).toFixed(2)} MB raw -> ${(gz.length / 1048576).toFixed(2)} MB gz`)
+  console.log(`  archive : ${OUT}`)
+  console.log(`  manifest: ${manifestPath}`)
+  console.log(`  sha256  : ${sha}`)
+}
