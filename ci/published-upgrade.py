@@ -197,7 +197,7 @@ process.exit(23)
     probe = json.loads(witness.read_bytes())
     candidate = base64.b64decode(probe["candidate"])
     assert base64.b64decode(probe["live"]) == (baseline if staged_profile else candidate)
-    assert probe["version"] == new[1:] and candidate != baseline
+    assert probe["version"] == new[1:]
     assert installed_files(plugin) == releases[old][0] and profile.read_bytes() == baseline
     transaction = root / ("." + plugin.name + ".update")
     assert not transaction.exists()
@@ -212,7 +212,17 @@ process.exit(23)
     def verify_new_files_and_settings():
         assert installed_files(plugin) == releases[new][0]
         updated = profile.read_bytes()
-        assert updated == candidate and updated.count(needle.encode()) == 1
+        # Generate the expected profile from the original user settings with the
+        # installed candidate at its final path. Older versions edit their draft
+        # before the failing probe; newer versions wait until verification succeeds.
+        reference = home / "profiles/upgrade-reference/cordis.patch.yml"
+        reference.parent.mkdir(exist_ok=True)
+        reference.write_bytes(baseline)
+        run(["node", str(plugin / "install.mjs"), "--target", "preset", "--profile", reference.parent.name,
+             "--dsh-home", str(home)])
+        expected = reference.read_bytes()
+        assert candidate in (baseline, expected)
+        assert updated == expected and updated != baseline and updated.count(needle.encode()) == 1
         for block in (USER_BEFORE, USER_AFTER):
             assert updated.count(block.replace("\n", eol).encode()) == 1
         verify_profile()
