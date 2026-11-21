@@ -14,7 +14,7 @@ const fixture = join(import.meta.dirname, 'fixtures/workspace-server.mjs')
 const fakeServer = JSON.stringify([process.execPath, fixture])
 
 function tempDir(t) {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'unica-verify-test-')))
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'unica-verify-test-')))
   t.after(() => rmSync(dir, { recursive: true, force: true }))
   return dir
 }
