@@ -81,6 +81,14 @@ await rm(REFERENCES_OUT, { recursive: true, force: true })
 await mkdir(SKILLS_OUT, { recursive: true })
 
 const upstreamSkills = (await readdir(join(SOURCE_PLUGIN, 'skills'), { withFileTypes: true })).filter((e) => e.isDirectory())
+// Examples retain a directly callable name in the default profile. A custom
+// bridge identifies the same name in its tool description (host/index.js).
+const skillRouting = [
+  'В примерах указаны имена инструментов стандартного сервера Unica.',
+  'При другом `serverName` найдите в каталоге DSH инструмент нужного сервера со строкой `Skill tool: <имя из примера>` в описании.',
+  'Подставьте его зарегистрированное имя в вызов, включая поле `name` в примерах JSON.',
+].join(' ')
+
 const unmappedSkills = new Map()
 const unmappedReferences = new Map()
 let rewritten = 0
@@ -105,7 +113,10 @@ for (const entry of upstreamSkills) {
     const { out, leftovers } = rewrite(text)
     if (out !== text) rewritten += 1
     for (const left of leftovers) unmappedSkills.set(left, (unmappedSkills.get(left) ?? 0) + 1)
-    await writeFile(destination, out, 'utf8')
+    const content = rel === 'SKILL.md'
+      ? out.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n\s*# [^\r\n]+)?\r?\n/, (header) => header + '\n' + skillRouting + '\n')
+      : out
+    await writeFile(destination, content, 'utf8')
   }
 }
 

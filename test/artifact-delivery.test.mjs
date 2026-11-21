@@ -191,6 +191,36 @@ for (const unload of [false, true]) {
   })
 }
 
+for (const peerPublishes of [true, false]) {
+  test(`cold core HTTP 503 ${peerPublishes ? 'uses a ready peer installation' : 'reports the failure for an incomplete cache'}`, async (t) => {
+    const { root, config, cleanups } = await setup(t)
+    const cwd = join(root, 'delayed')
+    await mkdir(cwd)
+    await writeFile(join(cwd, 'fail-core'), '')
+    const delayed = new UnicaProc({ cwd, config })
+    cleanups.push(() => delayed.close())
+    const started = delayed.start()
+    const result = peerPublishes ? started : assert.rejects(started, /HTTP 503/)
+    await waitFor(() => existsSync(join(cwd, 'core-requested')), 'first core request')
+    if (peerPublishes) {
+      await writeFile(join(root, 'release-core'), '')
+      const peer = new UnicaProc({ cwd: root, config })
+      cleanups.push(() => peer.close())
+      await peer.start()
+      assert.equal((await peer.callTool('unica.view', {})).structuredContent.data.workspaceRoot, root)
+    } else {
+      const { artifacts } = JSON.parse(await readFile(join(root, 'runtime-manifest.json')))
+      const [target, descriptor] = Object.entries(artifacts.unica.targets)[0]
+      const incomplete = join(config.runtimeCacheDir, 'unica', `test--${descriptor.asset.sha256}`, target)
+      await mkdir(incomplete, { recursive: true })
+      await writeFile(join(incomplete, '.ready.json'), '{}')
+    }
+    await writeFile(join(cwd, 'release-failure'), '')
+    await result
+    if (peerPublishes) assert.equal((await delayed.callTool('unica.view', {})).structuredContent.data.workspaceRoot, cwd)
+  })
+}
+
 test('a stalled cold delivery expires before initialize', async (t) => {
   const { root, config, cleanups } = await setup(t)
   const proc = new UnicaProc({ cwd: root, config: { ...config, coldStartTimeoutMs: 1500, startupTimeoutMs: 5000 } })

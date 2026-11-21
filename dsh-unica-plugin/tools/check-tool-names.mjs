@@ -13,7 +13,7 @@
 // stale copy is caught in CI where no upstream checkout is available.
 import { readFileSync } from 'node:fs'
 import { readdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -36,6 +36,9 @@ function walk(dir) {
 function inspect(path) {
   files += 1
   const text = readFileSync(path, 'utf8')
+  if (basename(path) === 'SKILL.md' && !text.includes('Skill tool: <имя из примера>')) {
+    problems.push(`${path}: missing instructions to resolve tools on a custom server`)
+  }
   for (const match of text.matchAll(/\bmcp__unica__[A-Za-z0-9_]+/g)) {
     references += 1
     if (!known.has(match[0])) problems.push(`${path}: unknown public tool name ${match[0]}`)
