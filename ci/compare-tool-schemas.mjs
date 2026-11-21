@@ -12,23 +12,15 @@ async function catalog(pluginRoot) {
     // Older unpacked releases expose MCP over stdio without the launcher readiness message.
     await proc.start(undefined, { legacyLauncher: true })
     const schemas = new Map()
-    const cursors = new Set()
-    let cursor
-    do {
-      const page = await proc.request('tools/list', cursor === undefined ? {} : { cursor }, { timeoutMs: config.startupTimeoutMs })
-      for (const { name, inputSchema } of page.tools) {
-        if (!name || !inputSchema || schemas.has(name)) throw new Error(`invalid or duplicate tool: ${name}`)
-        schemas.set(name, inputSchema)
-      }
-      cursor = page.nextCursor
-      if (cursor !== undefined) {
-        if (typeof cursor !== 'string' || cursors.has(cursor)) throw new Error('invalid or repeated tools/list cursor')
-        cursors.add(cursor)
-      }
-    } while (cursor !== undefined)
+    for (const { name, inputSchema } of await proc.listTools({ timeoutMs: config.startupTimeoutMs })) {
+      if (!name || !inputSchema || schemas.has(name)) throw new Error(`invalid or duplicate tool: ${name}`)
+      schemas.set(name, inputSchema)
+    }
     return { version: proc.serverInfo?.version, schemas }
   } catch (error) {
-    throw new Error(`${pluginRoot}: ${error.message}\n${proc.stderrTail()}`, { cause: error })
+    const tail = proc.stderrTail()
+    const detail = tail && !error.message.endsWith(tail) ? '\n' + tail : ''
+    throw new Error(`${pluginRoot}: ${error.message}${detail}`, { cause: error })
   } finally {
     proc.close('schema comparison complete')
   }

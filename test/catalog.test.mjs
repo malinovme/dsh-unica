@@ -90,3 +90,27 @@ test('persistent catalog failures stop after two retries and report the cause', 
   assert.match(errors[0], /initialize timed out after 200 ms/)
   assert.deepEqual(registered, [])
 })
+
+test('activation registers and invokes tools from later pages', async (t) => {
+  const { root, gate, registered, start } = await setup(t)
+  await rm(gate)
+  await writeFile(join(root, 'paginate-tools'), '')
+  await start(1500)
+  assert.equal(registered.length, 2)
+  const second = registered.find(tool => tool.name.includes('second'))
+  assert.ok(second)
+  const reply = await second.execute({}, { agent: { session: 'second-page' } })
+  assert.equal(reply.structuredContent.data.name, 'unica.second')
+})
+
+test('activation rejects a repeated catalog cursor', async (t) => {
+  const { root, gate, registered, warnings, errors, start } = await setup(t)
+  await rm(gate)
+  await writeFile(join(root, 'paginate-tools'), '')
+  await writeFile(join(root, 'repeat-cursor'), '')
+  await start(1500)
+  await waitFor(() => errors.length > 0)
+  assert.equal(warnings.length, 2)
+  assert.match(errors[0], /invalid or repeated tools\/list cursor/)
+  assert.deepEqual(registered, [])
+})

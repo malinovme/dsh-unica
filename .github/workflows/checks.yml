@@ -27,6 +27,8 @@ jobs:
           node-version: '24'
       - name: Initialize two launchers against empty and incomplete shared caches
         run: node --test test/cache-publication.test.mjs
+      - name: Check cached core permissions and startup diagnostics
+        run: node --test test/runtime-startup.test.mjs
 
   price-extension:
     name: Price calculator tutorial (${{ matrix.os }})
