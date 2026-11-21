@@ -84,27 +84,36 @@ function Test-UnicaPlugin([string]$Directory) {
 
 $publishScript = @'
 const fs = require('node:fs'), path = require('node:path')
-let [source, target, baseline] = process.argv.slice(1)
-while (fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink())
-  target = path.resolve(path.dirname(target), fs.readlinkSync(target))
-fs.mkdirSync(path.dirname(target), { recursive: true })
-// The symlink target may live on a different filesystem.
-const tmp = path.join(path.dirname(target), '.unica-' + require('node:crypto').randomUUID())
-try {
-  fs.copyFileSync(source, tmp, fs.constants.COPYFILE_EXCL)
-  function readOptional(file) {
-    try { return fs.readFileSync(file) }
-    catch (error) { if (error.code === 'ENOENT') return null; throw error }
-  }
-  const draft = fs.readFileSync(tmp), original = readOptional(baseline), live = readOptional(target)
-  if (!live?.equals(draft)) {
-    if (live === null ? original === null : original !== null && live.equals(original)) {
-      fs.renameSync(tmp, target)
-    } else {
-      process.exitCode = 3 // A user edit requires rollback, not a retry of publication.
+let published = false
+function publish() {
+  let [source, target, baseline] = process.argv.slice(1)
+  while (fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink())
+    target = path.resolve(path.dirname(target), fs.readlinkSync(target))
+  fs.mkdirSync(path.dirname(target), { recursive: true })
+  // The symlink target may live on a different filesystem.
+  const tmp = path.join(path.dirname(target), '.unica-' + require('node:crypto').randomUUID())
+  try {
+    fs.copyFileSync(source, tmp, fs.constants.COPYFILE_EXCL)
+    function readOptional(file) {
+      try { return fs.readFileSync(file) }
+      catch (error) { if (error.code === 'ENOENT') return null; throw error }
     }
-  }
-} finally { fs.rmSync(tmp, { force: true }) }
+    const draft = fs.readFileSync(tmp), original = readOptional(baseline), live = readOptional(target)
+    if (!live?.equals(draft)) {
+      if (live === null ? original === null : original !== null && live.equals(original)) {
+        fs.renameSync(tmp, target)
+      } else {
+        process.exitCode = 3 // A user edit requires rollback.
+        return
+      }
+    }
+    published = true
+  } finally { fs.rmSync(tmp, { force: true }) }
+}
+try { publish() } catch (error) {
+  console.error(error)
+  process.exitCode = published ? 1 : 4
+}
 '@
 $probeScript = @'
 const net = require('node:net')
@@ -170,7 +179,9 @@ function Complete-ProfilePublication([string]$ProfilePath, [switch]$Recover) {
     Say "  keeping live profile after interrupted cleanup: $ProfilePath"
   } else {
     & node -e $publishScript -- $draft $ProfilePath $savedProfile
-    if ($LASTEXITCODE -eq 3) {
+    $publicationStatus = $LASTEXITCODE
+    # During recovery the previous publisher may already have replaced the profile.
+    if ($publicationStatus -eq 3 -or ($publicationStatus -eq 4 -and -not $Recover)) {
       # Revoke publication intent before rollback, so another interruption is replayable.
       [IO.File]::Delete((Join-Path $tx 'publishing-profile'))
       if ($Recover) {
@@ -178,9 +189,9 @@ function Complete-ProfilePublication([string]$ProfilePath, [switch]$Recover) {
         Restore-Transaction $ProfilePath
         Remove-FinishedTransaction
       }
-      Die "profile changed during update: $ProfilePath"
+      if ($publicationStatus -eq 3) { Die "profile changed during update: $ProfilePath" }
     }
-    if ($LASTEXITCODE -ne 0) { Die "could not publish profile at $ProfilePath" }
+    if ($publicationStatus -ne 0) { Die "could not publish profile at $ProfilePath" }
   }
   [IO.File]::WriteAllText((Join-Path $tx 'committed'), '')
 }

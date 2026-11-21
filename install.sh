@@ -116,34 +116,47 @@ publish_profile() {
   draft="$TX/draft/cordis.patch.yml"
   if node -e '
     const fs = require("node:fs"), path = require("node:path")
-    let [source, target, baseline] = process.argv.slice(1)
-    while (fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink())
-      target = path.resolve(path.dirname(target), fs.readlinkSync(target))
-    fs.mkdirSync(path.dirname(target), { recursive: true })
-    // The symlink target may live on a different filesystem.
-    const tmp = path.join(path.dirname(target), ".unica-" + require("node:crypto").randomUUID())
-    try {
-      fs.copyFileSync(source, tmp, fs.constants.COPYFILE_EXCL)
-      function readOptional(file) {
-        try { return fs.readFileSync(file) }
-        catch (error) { if (error.code === "ENOENT") return null; throw error }
-      }
-      const draft = fs.readFileSync(tmp), original = readOptional(baseline), live = readOptional(target)
-      if (!live?.equals(draft)) {
-        if (live === null ? original === null : original !== null && live.equals(original)) {
-          fs.renameSync(tmp, target)
-        } else {
-          process.exitCode = 3 // A user edit requires rollback, not a retry of publication.
+    let published = false
+    function publish() {
+      let [source, target, baseline] = process.argv.slice(1)
+      while (fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink())
+        target = path.resolve(path.dirname(target), fs.readlinkSync(target))
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      // The symlink target may live on a different filesystem.
+      const tmp = path.join(path.dirname(target), ".unica-" + require("node:crypto").randomUUID())
+      try {
+        fs.copyFileSync(source, tmp, fs.constants.COPYFILE_EXCL)
+        function readOptional(file) {
+          try { return fs.readFileSync(file) }
+          catch (error) { if (error.code === "ENOENT") return null; throw error }
         }
-      }
-    } finally { fs.rmSync(tmp, { force: true }) }
+        const draft = fs.readFileSync(tmp), original = readOptional(baseline), live = readOptional(target)
+        if (!live?.equals(draft)) {
+          if (live === null ? original === null : original !== null && live.equals(original)) {
+            fs.renameSync(tmp, target)
+          } else {
+            process.exitCode = 3 // A user edit requires rollback.
+            return
+          }
+        }
+        published = true
+      } finally { fs.rmSync(tmp, { force: true }) }
+    }
+    try { publish() } catch (error) {
+      console.error(error)
+      process.exitCode = published ? 1 : 4
+    }
   ' -- "$draft" "$PATCH" "$TX/profile"; then
     : > "$TX/committed"
     return
   else
     publication_status=$?
   fi
-  [ "$publication_status" -eq 3 ] || die "could not publish profile at $PATCH"
+  # During recovery the previous publisher may already have replaced the profile.
+  case "$publication_status:$1" in
+    3:*|4:install) ;;
+    *) die "could not publish profile at $PATCH" ;;
+  esac
   # Revoke publication intent before rollback, so another interruption is replayable.
   rm "$TX/publishing-profile"
   if [ "$1" = recover ]; then
@@ -151,7 +164,8 @@ publish_profile() {
     rollback || die "rollback incomplete; recovery files retained at $TX"
     retire_tx || die "could not retire transaction at $TX"
   fi
-  die "profile changed during update: $PATCH"
+  [ "$publication_status" -ne 3 ] || die "profile changed during update: $PATCH"
+  die "could not publish profile at $PATCH"
 }
 
 if [ -e "$TX" ] || [ -L "$TX" ]; then
