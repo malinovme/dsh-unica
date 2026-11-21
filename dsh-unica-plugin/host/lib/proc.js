@@ -3,6 +3,7 @@ import { join } from 'node:path'
 
 const CLIENT_INFO = { name: 'dsh-unica-native', version: '0.1.0' }
 const PROTOCOL_VERSION = '2025-06-18'
+const STDERR_TAIL_CHARS = 4096
 
 /**
  * One stdio MCP connection to unica, owned by a working directory.
@@ -15,7 +16,7 @@ export class UnicaProc {
   #pending = new Map()
   #nextId = 1
   #buffer = ''
-  #stderr = []
+  #stderr = ''
   #closing = false
   #closed = false
   #finishPreparation
@@ -53,8 +54,7 @@ export class UnicaProc {
     this.#child.stdout.on('data', (chunk) => this.#onData(chunk))
     this.#child.stderr.setEncoding('utf8')
     this.#child.stderr.on('data', (chunk) => {
-      this.#stderr.push(chunk)
-      if (this.#stderr.length > 50) this.#stderr.shift()
+      this.#stderr = (this.#stderr + chunk).slice(-STDERR_TAIL_CHARS)
     })
     this.#child.on('message', (message) => {
       if (message?.type === 'unica:runtime-ready') this.#finishPreparation?.()
@@ -65,7 +65,15 @@ export class UnicaProc {
     this.#child.on('error', (error) => this.#failAll(error))
     this.#child.on('exit', (code, signal) => {
       this.#closed = true
-      this.#failAll(new Error(`unica process exited (code=${code}, signal=${signal})`))
+      const fail = () => this.#failAll(new Error(`unica process exited (code=${code}, signal=${signal})`))
+      if (this.#child.stderr.readableEnded) return fail()
+      // Drain the last diagnostic, even when exit precedes it. A surviving
+      // daemon can inherit the pipe, so its lifetime must not delay callers.
+      const timer = setTimeout(fail, 100).unref()
+      this.#child.once('close', () => {
+        clearTimeout(timer)
+        fail()
+      })
     })
 
     try {
@@ -79,7 +87,9 @@ export class UnicaProc {
       this.serverInfo = result?.serverInfo
       return result
     } catch (error) {
+      const tail = this.#closing || signal?.aborted ? '' : this.stderrTail()
       this.close('unica startup failed')
+      if (tail) throw new Error(`${error.message}\n${tail}`, { cause: error })
       throw error
     }
   }
@@ -103,8 +113,19 @@ export class UnicaProc {
   }
 
   async listTools(options) {
-    const result = await this.request('tools/list', {}, options)
-    const tools = Array.isArray(result?.tools) ? result.tools : []
+    const tools = []
+    const cursors = new Set()
+    let cursor
+    do {
+      const result = await this.request('tools/list', cursor === undefined ? {} : { cursor }, options)
+      if (!Array.isArray(result?.tools)) throw new Error('invalid tools/list response')
+      tools.push(...result.tools)
+      cursor = result.nextCursor
+      if (cursor !== undefined) {
+        if (typeof cursor !== 'string' || cursors.has(cursor)) throw new Error('invalid or repeated tools/list cursor')
+        cursors.add(cursor)
+      }
+    } while (cursor !== undefined)
     if (tools.length === 0) throw new Error('unica listed no tools')
     return tools
   }
@@ -192,7 +213,7 @@ export class UnicaProc {
   }
 
   stderrTail() {
-    return this.#stderr.join('').trim()
+    return this.#stderr.trim()
   }
 
   #onData(chunk) {
@@ -210,7 +231,17 @@ export class UnicaProc {
         this.log?.warn?.(`unica-native: unparsable frame from unica: ${line.slice(0, 200)}`)
         continue
       }
-      if (message.id === undefined) continue
+      if (message === null || typeof message !== 'object' || Array.isArray(message)) continue
+      if (typeof message.method === 'string') {
+        if (message.id !== undefined) {
+          const response = message.method === 'ping'
+            ? { jsonrpc: '2.0', id: message.id, result: {} }
+            : { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found' } }
+          this.#child.stdin.write(`${JSON.stringify(response)}\n`)
+        }
+        continue
+      }
+      if (message.id === undefined || (message.result === undefined && message.error === undefined)) continue
       const pending = this.#pending.get(message.id)
       if (pending === undefined) continue
       this.#pending.delete(message.id)

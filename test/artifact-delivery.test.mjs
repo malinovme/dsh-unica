@@ -21,7 +21,7 @@ async function waitFor(predicate, description) {
   }
 }
 
-async function setup(t, mode) {
+async function setup(t, mode, delivery = 'background') {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'unica-artifact-')))
   const cleanups = []
   t.after(async () => {
@@ -55,7 +55,7 @@ async function setup(t, mode) {
   const config = resolveConfig({
     nodePath: process.execPath, pluginRoot: root, probeCwd: root, runtimeCacheDir: cache,
     providerStateDir: join(root, 'state'), startupTimeoutMs: 1000, coldStartTimeoutMs: 15_000,
-    artifactDelivery: mode ? 'background' : 'off',
+    artifactDelivery: mode ? delivery : 'off',
   })
   if (mode) {
     const core = join(cache, 'unica', `test--${coreHash}`, target)
@@ -77,6 +77,29 @@ async function setup(t, mode) {
     }
   })
   return { root, config, cleanups, engine: join(cache, 'v8-runner', `test--${engineHash}`, target) }
+}
+
+for (const mode of ['recover', 'corrupt', 'unavailable']) {
+  test(`eager engine delivery ${mode === 'recover' ? 'waits for success' : `rejects ${mode}`}`, async (t) => {
+    const { root, config, cleanups, engine } = await setup(t, mode, 'eager')
+    const proc = new UnicaProc({ cwd: root, config })
+    cleanups.push(() => proc.close())
+    const startup = proc.start()
+    await waitFor(() => existsSync(join(root, 'engine-attempts')), 'engine download')
+    assert.equal(existsSync(join(engine, '.ready.json')), false)
+    await writeFile(join(root, 'release-engine'), '')
+    if (mode === 'recover') {
+      await startup
+      assert.equal(await readFile(join(engine, 'engine'), 'utf8'), 'fixture engine')
+      assert.ok(existsSync(join(engine, '.ready.json')))
+    } else {
+      await assert.rejects(startup, mode === 'corrupt' ? /v8-runner delivery failed: .*checksum mismatch/ : /v8-runner delivery failed: .*HTTP 503/)
+      assert.equal(existsSync(engine), false)
+      assert.equal(proc.alive, false)
+    }
+    const attempts = (await readFile(join(root, 'engine-attempts'), 'utf8')).trim().split('\n')
+    assert.equal(attempts.length, { recover: 2, corrupt: 1, unavailable: 3 }[mode])
+  })
 }
 
 for (const unload of [false, true]) {

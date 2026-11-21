@@ -25,9 +25,8 @@
 // looks ready. That is the whole reason for the rename.
 import { createHash } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
-import { createWriteStream } from 'node:fs'
-import { chmod, link, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { existsSync, statSync } from 'node:fs'
+import { constants, createWriteStream, existsSync, statSync } from 'node:fs'
+import { access, chmod, link, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { homedir } from 'node:os'
@@ -201,6 +200,31 @@ async function hashFile(path) {
   return hash.digest('hex')
 }
 
+// A restored or copied cache can lose its Unix execute bits. Only grant the
+// owner execute permission after verifying the same open file we will chmod.
+async function ensureCoreExecutable(path, descriptor) {
+  if (process.platform === 'win32') return
+  try {
+    await access(path, constants.X_OK)
+    return
+  } catch (error) {
+    if (error.code !== 'EACCES') throw error
+  }
+  const file = descriptor.files?.find(file => file.path === descriptor.entrypoint && file.executable)
+  if (!file?.sha256) throw new Error(`cannot verify executable permission repair for ${path}`)
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const info = await handle.stat()
+    if (!info.isFile()) throw new Error(`expected a cached executable file at ${path}`)
+    const hash = createHash('sha256')
+    for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk)
+    if (hash.digest('hex') !== file.sha256) throw new Error(`cached core checksum mismatch: ${path}`)
+    await handle.chmod((info.mode & 0o777) | 0o100)
+  } finally {
+    await handle.close()
+  }
+}
+
 /**
  * Removes scratch directories a dead launcher left behind. A killed install (DSH
  * restart, Ctrl-C) cannot clean up after itself, and the leftovers are the size of
@@ -357,7 +381,7 @@ function missingEngines() {
     .sort((left, right) => order.indexOf(left) - order.indexOf(right))
 }
 
-async function deliverEngines(names) {
+async function deliverEngines(names, { eager = false } = {}) {
   for (const name of names) {
     for (const waitMs of [250, 750, null]) {
       try {
@@ -370,6 +394,7 @@ async function deliverEngines(names) {
           await delay(waitMs)
           continue
         }
+        if (eager) throw new Error(`${name} delivery failed: ${error.message}`, { cause: error })
         console.error(`unica launcher: ${name} delivery failed: ${error.message}`)
         notifyHost({ type: 'unica:engine-delivery-failed', name, message: error.message })
         break
@@ -490,7 +515,7 @@ if (selfTesting) {
 } else {
   const coreEntry = await installArtifact('unica').catch((error) => die(error.message))
   command = join(coreEntry.dir, coreEntry.descriptor.entrypoint)
-  if (!existsSync(command)) die(`the installed runtime is missing ${command}`)
+  await ensureCoreExecutable(command, coreEntry.descriptor).catch(error => die(error.message))
 
   // `off` keeps the cache untouched, `eager` blocks the handover until every engine
   // is in place, and the default starts the server at once and delivers behind it:
@@ -498,8 +523,11 @@ if (selfTesting) {
   // before it lands answers `bundled_tool_missing`, exactly as without them.
   const delivery = process.env.UNICA_ARTIFACT_DELIVERY ?? 'background'
   const pending = delivery === 'off' ? [] : missingEngines()
-  if (delivery === 'eager' && pending.length > 0) await deliverEngines(pending)
-  else if (delivery === 'background' && pending.length > 0) void deliverEngines(pending)
+  if (delivery === 'eager' && pending.length > 0) {
+    await deliverEngines(pending, { eager: true }).catch((error) => die(error.message))
+  } else if (delivery === 'background' && pending.length > 0) {
+    void deliverEngines(pending)
+  }
 }
 
 // The runtime finds its engines through this cache root, not through its own

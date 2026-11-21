@@ -70,7 +70,7 @@ try {
 } catch (error) {
   console.error(`unica-native selftest: ${error?.message ?? String(error)}`)
   const tail = proc.stderrTail()
-  if (tail.length > 0) console.error(tail)
+  if (tail && !error.message?.endsWith(tail)) console.error(tail)
   process.exitCode = 1
 } finally {
   // The self-test is a one-shot probe: it must leave nothing running. With a

@@ -41,6 +41,22 @@ async function waitFor(predicate, description, timeout = 5000) {
   }
 }
 
+test('server requests do not resolve a client request with the same id', async (t) => {
+  const { root, config } = await setup(t)
+  const proc = new UnicaProc({ cwd: root, config })
+  try {
+    await proc.start()
+    const replies = await proc.callTool('server-requests', {})
+    assert.deepEqual(replies, [
+      { jsonrpc: '2.0', id: 2, result: {} },
+      { jsonrpc: '2.0', id: 'unknown', error: { code: -32601, message: 'Method not found' } },
+    ])
+    assert.deepEqual(await proc.listTools(), [{ name: 'unica.view' }])
+  } finally {
+    proc.close('test finished', { tree: true })
+  }
+})
+
 // Exercise the registered tool and the real pipeline from DSH session to child stdio.
 async function registerView(cleanups, config, sessions) {
   const tools = []
