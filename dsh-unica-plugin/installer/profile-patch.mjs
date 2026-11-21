@@ -81,6 +81,8 @@ function splitEntries(block) {
   return starts.map((start, n) => lines.slice(start, n + 1 < starts.length ? starts[n + 1] : lines.length).join('\n').replace(/\s*$/, ''))
 }
 
+const insertHeader = /^- insert:(?:[ \t]+(#.*))?[ \t]*$/
+
 /**
  * Drops the child row `id` from every `- insert:` list that carries it.
  *
@@ -91,7 +93,7 @@ function removeInsertChild(text, id, annotation) {
   const out = []
   let removed = 0
   for (let i = 0; i < lines.length; i += 1) {
-    if (indentWidth(lines[i]) !== 0 || lines[i] !== '- insert:') {
+    if (!insertHeader.test(lines[i])) {
       out.push(lines[i])
       continue
     }
@@ -145,11 +147,13 @@ function removeEmptyInserts(text) {
   const out = []
   let removed = 0
   for (let i = 0; i < lines.length; i += 1) {
-    if (/^- insert:\s*$/.test(lines[i])) {
+    const header = insertHeader.exec(lines[i])
+    if (header) {
       let j = i + 1
       while (j < lines.length && (lines[j].trim() === '' || lines[j].trimStart().startsWith('#'))) j += 1
       if (j >= lines.length || /^- /.test(lines[j])) {
         removed += 1
+        if (header[1]) out.push(header[1])
         // Swallow the blank separator this entry owned, so no double blank line
         // is left where it stood.
         while (i + 1 < lines.length && lines[i + 1].trim() === '') i += 1
