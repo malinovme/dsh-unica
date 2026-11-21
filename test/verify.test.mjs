@@ -89,6 +89,56 @@ test('manual verification rejects an explicit tool error but accepts a successfu
   assert.ok(existsSync(patch))
 })
 
+test('self-test checks the structured workspace root with and without the text relay', t => {
+  const workspace = tempDir(t)
+  const other = join(workspace, 'other')
+  const args = ['--cwd', workspace, '--config-json', JSON.stringify({ probeCwd: workspace })]
+  const check = (reply, relay) => run(join(plugin, 'host/selftest.js'), args, {
+    FIXTURE_VIEW_REPLY: JSON.stringify(reply), UNICA_BRIDGE_TEXT_FALLBACK: relay,
+  })
+  for (const relay of ['0', '1']) {
+    for (const root of [workspace, other]) {
+      const result = check({ content: [], structuredContent: { data: { workspaceRoot: root } } }, relay)
+      assert.equal(result.status, root === workspace ? 0 : 1, result.stdout + result.stderr)
+      assert.equal(JSON.parse(result.stdout).root, root)
+    }
+  }
+  const content = [{ type: 'text', text: JSON.stringify({ data: { workspaceRoot: workspace } }) }]
+  const legacy = check({ content }, '0')
+  assert.equal(legacy.status, 0, legacy.stderr)
+  assert.equal(JSON.parse(legacy.stdout).workspace, 'matched')
+  const conflicting = check({ content, structuredContent: { data: { workspaceRoot: other } } }, '1')
+  assert.equal(conflicting.status, 1, conflicting.stdout + conflicting.stderr)
+  assert.equal(JSON.parse(conflicting.stdout).root, other)
+})
+
+test('verification probes the DSH catalog directory before checking the workspace', t => {
+  const home = tempDir(t)
+  const temporary = join(home, 'temporary')
+  const workspace = join(home, 'project')
+  const override = join(home, 'probe')
+  for (const path of [temporary, workspace, override]) mkdirSync(path)
+  const trace = join(home, 'catalog.log')
+  const env = { TMPDIR: temporary, TMP: temporary, TEMP: temporary, FIXTURE_CATALOG_TRACE: trace }
+  const failed = run(join(plugin, 'install.mjs'),
+    ['--dsh-home', home, '--target', 'profile', '--verify', '--verify-cwd', workspace],
+    { ...env, FIXTURE_REFUSED_PROBE_CWD: temporary })
+  assert.equal(failed.status, 1, failed.stdout + failed.stderr)
+  assert.match(failed.stdout + failed.stderr, /catalog unavailable in/)
+  assert.equal(existsSync(join(home, 'profiles/headless/cordis.patch.yml')), false)
+  assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), [temporary])
+  for (const [config, expected] of [
+    [{}, [temporary, workspace]], [{ probeCwd: override }, [override, workspace]], [{ probeCwd: workspace }, [workspace]],
+  ]) {
+    writeFileSync(trace, '')
+    const checked = run(join(plugin, 'host/selftest.js'),
+      ['--cwd', workspace, '--config-json', JSON.stringify(config)], env)
+    assert.equal(checked.status, 0, checked.stdout + checked.stderr)
+    assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), expected)
+    assert.equal(JSON.parse(checked.stdout).workspace, 'matched')
+  }
+})
+
 test('cancelled calls never reach the server and in-flight cancellations identify the request', async (t) => {
   const cwd = tempDir(t)
   const previous = process.env.UNICA_LAUNCH_SELFTEST_COMMAND

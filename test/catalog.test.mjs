@@ -15,7 +15,7 @@ async function waitFor(predicate) {
   }
 }
 
-async function setup(t) {
+async function setup(t, { workingDirectory, defaultCwd } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'unica-catalog-')))
   const gate = join(root, 'hold-initialize')
   await writeFile(gate, '')
@@ -30,12 +30,12 @@ async function setup(t) {
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   })
   const ctx = {
-    workingDirectory: { ensure: () => root },
+    workingDirectory: workingDirectory ?? { ensure: () => root },
     tools: { register(tool) { registered.push(tool); return () => {} } },
     effect(setup) { cleanups.push(setup()) },
     logger: { warn: msg => warnings.push(msg), error: msg => errors.push(msg) },
   }
-  const start = (startupTimeoutMs, serverName) => apply(ctx, { nodePath: process.execPath, probeCwd: root, startupTimeoutMs, serverName })
+  const start = (startupTimeoutMs, serverName) => apply(ctx, { nodePath: process.execPath, probeCwd: root, startupTimeoutMs, serverName, defaultCwd })
   return { root, gate, registered, warnings, errors, unload, start }
 }
 
@@ -133,3 +133,62 @@ for (const serverName of ['unica', 'team']) {
     assert.equal(reply.structuredContent.data.name, 'unica.apply')
   })
 }
+
+test('a failed session lookup never sends a call to the default project', async t => {
+  let projected
+  const defaultCwd = await mkdtemp(join(tmpdir(), 'unica-default-'))
+  const workingDirectory = {
+    ensure() { throw new Error('ensure unavailable') },
+    get() {
+      if (projected === undefined) throw new Error('projection unavailable')
+      return projected
+    },
+  }
+  const { gate, registered, root, start } = await setup(t, { workingDirectory, defaultCwd })
+  t.after(() => rm(defaultCwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }))
+  await rm(gate)
+  await start(3000)
+  const call = exec => registered[0].execute({}, exec).then(reply => reply.structuredContent.data)
+  const session = { agent: { session: 'project-A' } }
+  const before = await call({})
+  assert.equal(before.calls, 1)
+  await assert.rejects(call(session), /session working directory/i)
+
+  projected = root
+  const recovered = await call(session)
+  assert.equal(recovered.workspaceRoot, root)
+  assert.equal(recovered.calls, 1)
+
+  const after = await call({})
+  assert.equal(after.pid, before.pid)
+  assert.equal(after.calls, 2)
+
+  // A failed lookup followed by an empty projection is still a failure.
+  projected = null
+  await assert.rejects(call(session), /session working directory/i)
+  workingDirectory.ensure = () => ''
+  await assert.rejects(call(session), /session working directory/i)
+  // The session explicitly has no project in either source.
+  workingDirectory.ensure = () => undefined
+  const unassigned = await call(session)
+  assert.equal(unassigned.pid, before.pid)
+  assert.equal(unassigned.calls, 3)
+})
+
+test('cancelling the session lookup prevents a fallback lookup', async t => {
+  const controller = new AbortController()
+  let fallbackCalls = 0
+  const workingDirectory = {
+    ensure() {
+      controller.abort(new Error('session cancelled'))
+      throw controller.signal.reason
+    },
+    get() { fallbackCalls++; return undefined },
+  }
+  const { gate, registered, start } = await setup(t, { workingDirectory })
+  await rm(gate)
+  await start(3000)
+  await assert.rejects(registered[0].execute({}, { agent: { session: 'project-A' }, signal: controller.signal }),
+    error => error === controller.signal.reason)
+  assert.equal(fallbackCalls, 0)
+})
