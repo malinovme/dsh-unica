@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -86,6 +86,86 @@ test('concurrent DSH sessions use separate workers and reuse their own workspace
   const [againB, againA] = await Promise.all([view('b'), view('a')])
   assert.deepEqual(againA, { ...a, calls: 2 })
   assert.deepEqual(againB, { ...b, calls: 2 })
+})
+
+// Windows pins a worker's cwd. Retarget a junction there, and replace the
+// directory itself on POSIX. Both present the same pool key with new contents.
+async function replaceableWorkspace(root) {
+  const cwd = join(root, 'project')
+  const original = join(root, 'original')
+  if (process.platform === 'win32') {
+    await mkdir(original)
+    await symlink(original, cwd, 'junction')
+  } else {
+    await mkdir(cwd)
+  }
+  return {
+    cwd, original,
+    async replace() {
+      if (process.platform === 'win32') {
+        const replacement = join(root, 'replacement')
+        await mkdir(replacement)
+        await unlink(cwd)
+        await symlink(replacement, cwd, 'junction')
+      } else {
+        await rename(cwd, original)
+        await mkdir(cwd)
+      }
+      await writeFile(join(cwd, 'paginate-tools'), '')
+    },
+  }
+}
+
+test('replacing a project at the same path drains its worker after the active call', async (t) => {
+  const { root, config } = await setup(t)
+  const workspace = await replaceableWorkspace(root)
+  const pool = new ProcPool({ ...config, maxProcesses: 1 })
+  const release = Promise.withResolvers()
+  const view = async proc => (await proc.callTool('unica.view', {})).structuredContent.data
+  let old
+  const active = pool.withProc(workspace.cwd, async proc => {
+    old = await view(proc)
+    await release.promise
+    return proc.listTools()
+  })
+  try {
+    await waitFor(() => old, 'the original call to start')
+    await workspace.replace()
+    const current = await pool.withProc(workspace.cwd, async proc => {
+      assert.deepEqual(await proc.listTools(), [{ name: 'unica.view' }, { name: 'unica.second' }])
+      return view(proc)
+    })
+    assert.notEqual(current.pid, old.pid)
+    release.resolve()
+    assert.deepEqual(await active, [{ name: 'unica.view' }])
+    await Promise.all([old.pid, old.launcherPid].map(waitForProcessExit))
+    const again = await pool.withProc(workspace.cwd, view)
+    assert.equal(again.pid, current.pid)
+  } finally {
+    release.resolve()
+    await Promise.allSettled([active])
+    pool.closeAll()
+  }
+})
+
+test('a delayed initialize for a replaced project cannot claim the new path', async (t) => {
+  const { root, config } = await setup(t)
+  const workspace = await replaceableWorkspace(root)
+  await writeFile(join(workspace.cwd, 'hold-initialize'), '')
+  const pool = new ProcPool(config)
+  const originalCall = pool.withProc(workspace.cwd, proc => proc.listTools())
+  try {
+    await waitFor(() => existsSync(join(workspace.cwd, 'initialize-started')), 'the original initialize')
+    await workspace.replace()
+    const expected = [{ name: 'unica.view' }, { name: 'unica.second' }]
+    assert.deepEqual(await pool.withProc(workspace.cwd, proc => proc.listTools()), expected)
+    await rm(join(workspace.original, 'hold-initialize'))
+    assert.deepEqual(await originalCall, [{ name: 'unica.view' }])
+    assert.deepEqual(await pool.withProc(workspace.cwd, proc => proc.listTools()), expected)
+  } finally {
+    pool.closeAll()
+    await Promise.allSettled([originalCall])
+  }
 })
 
 test('a warm worker survives a concurrent call in another project at maxProcesses 1', async (t) => {

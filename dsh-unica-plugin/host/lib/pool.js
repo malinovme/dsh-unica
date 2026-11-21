@@ -25,7 +25,7 @@ export function canonicalCwd(cwd) {
  */
 export class ProcPool {
   #entries = new Map()
-  #pending = new Map()
+  #retired = new Set()
   #timer
   #closed = false
 
@@ -51,24 +51,27 @@ export class ProcPool {
     } finally {
       entry.busy -= 1
       entry.lastUsed = Date.now()
+      if (entry.busy === 0 && this.#retired.delete(entry)) entry.proc.close('unica workspace was replaced')
       this.#makeRoom(this.config.maxProcesses)
     }
   }
 
   #getEntry(cwd) {
+    const { dev, ino } = statSync(cwd, { bigint: true })
     const existing = this.#entries.get(cwd)
-    if (existing !== undefined && existing.proc.alive) return existing
-
-    let entry = this.#pending.get(cwd)
-    if (entry === undefined) {
-      const proc = new UnicaProc({ cwd, config: this.config, log: this.log })
-      entry = { proc, busy: 0, lastUsed: Date.now() }
-      entry.started = this.#start(cwd, entry).finally(() => {
-        entry.started = undefined
-        this.#pending.delete(cwd)
-      })
-      this.#pending.set(cwd, entry)
+    if (existing !== undefined) {
+      if (existing.dev === dev && existing.ino === ino && (existing.started || existing.proc.alive)) return existing
+      this.#entries.delete(cwd)
+      // Keep the old worker available to its existing calls until they finish.
+      if (existing.busy > 0) this.#retired.add(existing)
+      else existing.proc.close('unica workspace was replaced')
     }
+
+    this.#makeRoom()
+    const proc = new UnicaProc({ cwd: realpathSync.native(cwd), config: this.config, log: this.log })
+    const entry = { proc, dev, ino, busy: 0, lastUsed: Date.now() }
+    this.#entries.set(cwd, entry)
+    entry.started = this.#start(cwd, entry)
     return entry
   }
 
@@ -89,25 +92,20 @@ export class ProcPool {
 
   async #start(cwd, entry) {
     const { proc } = entry
-    const stale = this.#entries.get(cwd)
-    if (stale !== undefined) {
-      stale.proc.close('unica process was replaced')
-      this.#entries.delete(cwd)
-    }
-    this.#makeRoom()
-
     try {
       await proc.start()
       if (this.#closed) throw new Error(UNLOADED)
       entry.lastUsed = Date.now()
-      this.#entries.set(cwd, entry)
       this.log?.info?.(`unica-native: started unica in ${cwd}`)
-      // All callers may have cancelled before initialize finished.
-      if (entry.busy === 0) this.#makeRoom(this.config.maxProcesses)
     } catch (error) {
+      if (this.#entries.get(cwd) === entry) this.#entries.delete(cwd)
       proc.close('unica process failed to start')
       if (!this.#closed) this.log?.error?.(`unica-native: failed to start unica in ${cwd}: ${error.message}`)
       throw error
+    } finally {
+      entry.started = undefined
+      // All callers may have cancelled before initialize finished.
+      if (entry.busy === 0) this.#makeRoom(this.config.maxProcesses)
     }
   }
 
@@ -115,7 +113,7 @@ export class ProcPool {
   #makeRoom(limit = this.config.maxProcesses - 1) {
     while (this.#entries.size > limit) {
       const victim = [...this.#entries.entries()]
-        .filter(([, entry]) => entry.busy === 0)
+        .filter(([, entry]) => entry.busy === 0 && !entry.started)
         .sort(([, a], [, b]) => a.lastUsed - b.lastUsed)[0]
       if (victim === undefined) {
         this.log?.warn?.(
@@ -133,7 +131,7 @@ export class ProcPool {
   #reap() {
     const now = Date.now()
     for (const [cwd, entry] of this.#entries) {
-      if (entry.busy > 0 || now - entry.lastUsed <= this.config.idleMs) continue
+      if (entry.busy > 0 || entry.started || now - entry.lastUsed <= this.config.idleMs) continue
       entry.proc.close('unica process closed after idle timeout')
       this.#entries.delete(cwd)
       this.log?.info?.(`unica-native: closed idle unica in ${cwd}`)
@@ -143,9 +141,9 @@ export class ProcPool {
   closeAll() {
     this.#closed = true
     clearInterval(this.#timer)
-    for (const { proc } of this.#pending.values()) proc.close(UNLOADED)
+    for (const { proc } of this.#retired) proc.close(UNLOADED)
     for (const { proc } of this.#entries.values()) proc.close(UNLOADED)
-    this.#pending.clear()
+    this.#retired.clear()
     this.#entries.clear()
   }
 }
