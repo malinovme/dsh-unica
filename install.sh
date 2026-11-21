@@ -114,7 +114,7 @@ rollback() {
 
 publish_profile() {
   draft="$TX/draft/cordis.patch.yml"
-  node -e '
+  if node -e '
     const fs = require("node:fs"), path = require("node:path")
     let [source, target, baseline] = process.argv.slice(1)
     while (fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink())
@@ -124,15 +124,34 @@ publish_profile() {
     const tmp = path.join(path.dirname(target), ".unica-" + require("node:crypto").randomUUID())
     try {
       fs.copyFileSync(source, tmp, fs.constants.COPYFILE_EXCL)
-      const read = p => fs.existsSync(p) ? fs.readFileSync(p) : null
-      const original = read(baseline), live = read(target)
-      if (live === null ? original === null : original !== null && live.equals(original)) {
-        fs.renameSync(tmp, target)
-      } else {
-        console.error("keeping changed profile: " + target)
+      function readOptional(file) {
+        try { return fs.readFileSync(file) }
+        catch (error) { if (error.code === "ENOENT") return null; throw error }
+      }
+      const draft = fs.readFileSync(tmp), original = readOptional(baseline), live = readOptional(target)
+      if (!live?.equals(draft)) {
+        if (live === null ? original === null : original !== null && live.equals(original)) {
+          fs.renameSync(tmp, target)
+        } else {
+          process.exitCode = 3 // A user edit requires rollback, not a retry of publication.
+        }
       }
     } finally { fs.rmSync(tmp, { force: true }) }
-  ' -- "$draft" "$PATCH" "$TX/profile" || return 1
+  ' -- "$draft" "$PATCH" "$TX/profile"; then
+    : > "$TX/committed"
+    return
+  else
+    publication_status=$?
+  fi
+  [ "$publication_status" -eq 3 ] || die "could not publish profile at $PATCH"
+  # Revoke publication intent before rollback, so another interruption is replayable.
+  rm "$TX/publishing-profile"
+  if [ "$1" = recover ]; then
+    # Normal installation already has an EXIT trap to roll back and retire.
+    rollback || die "rollback incomplete; recovery files retained at $TX"
+    retire_tx || die "could not retire transaction at $TX"
+  fi
+  die "profile changed during update: $PATCH"
 }
 
 if [ -e "$TX" ] || [ -L "$TX" ]; then
@@ -150,7 +169,7 @@ if [ -e "$TX" ] || [ -L "$TX" ]; then
     PATCH="$(cat "$journal")"
     case "$PATCH" in /*/cordis.patch.yml) ;; *) die "invalid profile path in $TX";; esac
     if [ -f "$TX/publishing-profile" ]; then
-      publish_profile || die "could not finish profile publication at $TX"
+      publish_profile recover
     else
       rollback || die "rollback incomplete; recovery files retained at $TX"
     fi
@@ -310,15 +329,8 @@ mv "$STAGE" "$INSTALL"
 set -- --target "$TARGET" --profile "$draft_profile" --dsh-home "$DSH_HOME"
 [ "$VERIFY" = "1" ] && set -- "$@" --verify
 node "$INSTALL/install.mjs" "$@"
-if [ -f "$TX/profile" ]; then
-  cmp -s "$TX/profile" "$PATCH" || die "profile changed during update: $PATCH"
-elif [ -e "$PATCH" ]; then
-  die "profile changed during update: $PATCH"
-fi
 [ -f "$draft" ] || die "installer did not prepare a profile"
-# Record intent before the atomic rename. Recovery can finish a pending
-# publication only if the user's profile still matches the original snapshot.
+# Record intent before publishing. A retry also recognizes a completed rename.
 : > "$TX/publishing-profile"
-publish_profile || die "could not publish profile"
-: > "$TX/committed"
+publish_profile install
 say "  installed to: $INSTALL"

@@ -92,12 +92,17 @@ fs.mkdirSync(path.dirname(target), { recursive: true })
 const tmp = path.join(path.dirname(target), '.unica-' + require('node:crypto').randomUUID())
 try {
   fs.copyFileSync(source, tmp, fs.constants.COPYFILE_EXCL)
-  const read = p => fs.existsSync(p) ? fs.readFileSync(p) : null
-  const original = read(baseline), live = read(target)
-  if (live === null ? original === null : original !== null && live.equals(original)) {
-    fs.renameSync(tmp, target)
-  } else {
-    console.error('keeping changed profile: ' + target)
+  function readOptional(file) {
+    try { return fs.readFileSync(file) }
+    catch (error) { if (error.code === 'ENOENT') return null; throw error }
+  }
+  const draft = fs.readFileSync(tmp), original = readOptional(baseline), live = readOptional(target)
+  if (!live?.equals(draft)) {
+    if (live === null ? original === null : original !== null && live.equals(original)) {
+      fs.renameSync(tmp, target)
+    } else {
+      process.exitCode = 3 // A user edit requires rollback, not a retry of publication.
+    }
   }
 } finally { fs.rmSync(tmp, { force: true }) }
 '@
@@ -165,6 +170,16 @@ function Complete-ProfilePublication([string]$ProfilePath, [switch]$Recover) {
     Say "  keeping live profile after interrupted cleanup: $ProfilePath"
   } else {
     & node -e $publishScript -- $draft $ProfilePath $savedProfile
+    if ($LASTEXITCODE -eq 3) {
+      # Revoke publication intent before rollback, so another interruption is replayable.
+      [IO.File]::Delete((Join-Path $tx 'publishing-profile'))
+      if ($Recover) {
+        # Normal installation rolls back and retires in the finally block.
+        Restore-Transaction $ProfilePath
+        Remove-FinishedTransaction
+      }
+      Die "profile changed during update: $ProfilePath"
+    }
     if ($LASTEXITCODE -ne 0) { Die "could not publish profile at $ProfilePath" }
   }
   [IO.File]::WriteAllText((Join-Path $tx 'committed'), '')
@@ -332,7 +347,6 @@ server.unref()
   $code = $LASTEXITCODE
   if ($code -eq 0) {
     if (-not [IO.File]::Exists($draft)) { Die 'installer did not prepare a profile' }
-    if (-not (Test-OriginalProfile $patch)) { Die "profile changed during update: $patch" }
     [IO.File]::WriteAllText((Join-Path $tx 'publishing-profile'), '')
     Complete-ProfilePublication $patch
     Say "  installed to: $install"
