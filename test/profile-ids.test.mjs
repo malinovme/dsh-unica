@@ -82,3 +82,26 @@ test('removing the last child of a commented insert preserves its comment withou
   assert.match(content, /^# keep this explanation$/m)
   assert.equal(editProfilePatch(content, edit).content, content)
 })
+
+test('reinstallation resolves reordered ids at the item level and retains user options', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'unica-reordered-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const install = () => execFileSync(process.execPath, [resolve(import.meta.dirname, '../dsh-unica-plugin/install.mjs'),
+    '--dsh-home', dir, '--target', 'profile'])
+  install()
+  const path = join(dir, 'profiles/headless/cordis.patch.yml')
+  const initial = await readFile(path, 'utf8')
+  const neighbor = '    - name: other\n      config:\n        id: unica-native\n      id: neighbor'
+  const changed = initial.replace(/    - id: unica-native\r?\n      name: (.+)/,
+    neighbor + '\n    - name: $1\n      id: unica-native  # my bridge').replace('maxProcesses: 4', 'maxProcesses: 2')
+  assert.ok(changed.includes('# my bridge'))
+  await writeFile(path, changed)
+  install()
+  const updated = await readFile(path, 'utf8')
+  assert.equal(updated.match(/^(?:    - |      )id: unica-native\b/gm)?.length, 1)
+  assert.match(updated, /maxProcesses: 2\b/)
+  assert.ok(updated.includes(neighbor))
+  assert.ok(updated.includes('# my bridge'))
+  install()
+  assert.equal(await readFile(path, 'utf8'), updated)
+})

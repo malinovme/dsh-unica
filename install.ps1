@@ -267,6 +267,7 @@ try {
   # Asked for rather than hard-coded: a version written into this script goes
   # stale silently, and the failure would surface as a download error on a tag
   # that used to exist. A pinned -Version skips the lookup.
+  if ($BaseUrl -and -not $Version) { $Version = "local" }
   if (-not $Version) {
     if (Get-Command gh -ErrorAction SilentlyContinue) {
       $Version = (& gh release view --repo $Repo --json tagName -q .tagName 2>$null | Select-Object -First 1)
