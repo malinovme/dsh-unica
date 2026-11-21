@@ -2,6 +2,7 @@ import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveArtifactDelivery } from '../../bootstrap/artifact-delivery.mjs'
 
 /** The plugin root (`dsh-unica-plugin/`) that ships `bootstrap/launch.mjs`. */
 export const DEFAULT_PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -9,7 +10,6 @@ export const DEFAULT_PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url
 const DEFAULTS = {
   serverName: 'unica',
   nodePath: 'node',
-  artifactDelivery: 'background',
   probeCwd: null,
   defaultCwd: null,
   maxProcesses: 4,
@@ -74,7 +74,7 @@ export function resolveConfig(raw, { pluginRoot = DEFAULT_PLUGIN_ROOT } = {}) {
       expandPath(config.providerStateDir) ??
       expandPath(process.env.UNICA_PROVIDER_STATE_DIR) ??
       join(home, 'unica', 'provider-state'),
-    artifactDelivery: config.artifactDelivery ?? DEFAULTS.artifactDelivery,
+    artifactDelivery: resolveArtifactDelivery(config.artifactDelivery),
     probeCwd: expandPath(config.probeCwd) ?? DEFAULTS.probeCwd,
     defaultCwd: expandPath(config.defaultCwd) ?? DEFAULTS.defaultCwd,
     maxProcesses: positiveInteger(config.maxProcesses, DEFAULTS.maxProcesses, 'maxProcesses'),

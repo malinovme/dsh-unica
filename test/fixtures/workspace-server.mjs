@@ -49,6 +49,10 @@ for await (const line of createInterface({ input: process.stdin })) {
       console.log(JSON.stringify({ jsonrpc: '2.0', method: 'unknown/notification' }))
       continue
     }
+    if (params.name === 'artifact-delivery') {
+      console.log(JSON.stringify({ jsonrpc: '2.0', id, result: { structuredContent: { mode: process.env.UNICA_ARTIFACT_DELIVERY } } }))
+      continue
+    }
     if (params.name === 'hold') continue
     if (params.name === 'history') {
       console.log(JSON.stringify({ jsonrpc: '2.0', id, result: { calls, cancelled } }))
