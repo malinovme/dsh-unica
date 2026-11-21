@@ -7,13 +7,27 @@
 import { resolveConfig } from './lib/config.js'
 import { canonicalCwd } from './lib/pool.js'
 import { UnicaProc } from './lib/proc.js'
-import { loadCatalog } from './lib/catalog.js'
+import { catalogCwd, loadCatalog } from './lib/catalog.js'
 import { resultText } from './lib/render.js'
 
 const args = process.argv.slice(2)
 const flag = (name) => {
   const index = args.indexOf(name)
   return index === -1 ? undefined : args[index + 1]
+}
+
+function reportedRoot(view) {
+  const root = view.structuredContent?.data?.workspaceRoot
+  if (root !== undefined) return root
+  for (const block of view.content ?? []) {
+    if (block?.type !== 'text') continue
+    try {
+      const textRoot = JSON.parse(block.text)?.data?.workspaceRoot
+      if (textRoot !== undefined) return textRoot
+    } catch {
+      // Tools may include human-readable messages alongside the JSON envelope.
+    }
+  }
 }
 
 const requested = flag('--cwd') ?? process.cwd()
@@ -31,22 +45,16 @@ const config = resolveConfig({
   startupTimeoutMs: startupTimeout === undefined ? undefined : Number(startupTimeout),
   ...JSON.parse(flag('--config-json') ?? '{}'),
 })
-const proc = new UnicaProc({ cwd, config, log: { info() {}, warn: console.error, error: console.error } })
+const proc = new UnicaProc({ cwd, config, closeTree: true, log: { info() {}, warn: console.error, error: console.error } })
 const startedAt = Date.now()
 
 try {
-  if (config.probeCwd && config.probeCwd !== cwd) await loadCatalog(config)
+  if (catalogCwd(config) !== cwd) await loadCatalog(config, proc.log, undefined, { closeTree: true })
   await proc.start()
   const tools = await proc.listTools({ timeoutMs: config.startupTimeoutMs })
   const view = await proc.callTool('unica.view', {})
-  const text = (view.content ?? []).find((block) => block?.type === 'text')?.text ?? ''
   if (view.isError === true) throw new Error(`unica.view failed: ${resultText(view) || 'tool returned isError'}`)
-  let root
-  try {
-    root = JSON.parse(text)?.data?.workspaceRoot
-  } catch {
-    root = undefined
-  }
+  const root = reportedRoot(view)
 
   // `ok` answers the installer's question — will the tools work here? — and the
   // tool catalog answers it. The catalog arrives even in a directory unica will
@@ -82,5 +90,5 @@ try {
   // plain close on Windows only the Node launcher dies, and the runtime's daemon
   // survives, keeps the console it inherited and holds provider-state locks — the
   // installer then looks hung after it has already finished.
-  proc.close('selftest is done', { tree: true })
+  proc.close('selftest is done')
 }

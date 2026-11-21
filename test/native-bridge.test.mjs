@@ -41,6 +41,18 @@ async function waitFor(predicate, description, timeout = 5000) {
   }
 }
 
+test('bridge timeouts fit the Node timer range', () => {
+  const max = 2 ** 31 - 1
+  for (const field of ['coldStartTimeoutMs', 'startupTimeoutMs', 'toolCallTimeoutMs']) {
+    assert.equal(resolveConfig({ [field]: 1 })[field], 1)
+    assert.equal(resolveConfig({ [field]: max })[field], max)
+    assert.throws(() => resolveConfig({ [field]: max + 1 }), new RegExp(field + '.*' + max))
+    assert.throws(() => resolveConfig({ [field]: 0 }), new RegExp(field))
+  }
+  // The pool periodically compares elapsed idle time; it never schedules this full delay.
+  assert.equal(resolveConfig({ idleMs: max + 1 }).idleMs, max + 1)
+})
+
 test('server requests do not resolve a client request with the same id', async (t) => {
   const { root, config } = await setup(t)
   const proc = new UnicaProc({ cwd: root, config })

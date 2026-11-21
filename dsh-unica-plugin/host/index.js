@@ -1,7 +1,6 @@
-import { tmpdir } from 'node:os'
-import { dirname, resolve } from 'node:path'
+import { dirname, isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { loadCatalog, retryCatalog } from './lib/catalog.js'
+import { catalogCwd, loadCatalog, retryCatalog } from './lib/catalog.js'
 import { resolveConfig } from './lib/config.js'
 import { DEFAULT_SERVER_NAME, publicToolName } from './lib/naming.js'
 import { ProcPool, canonicalCwd } from './lib/pool.js'
@@ -34,22 +33,30 @@ function makeLogger(ctx) {
  * still exists; `get` is the fallback when validation loses a race.
  */
 async function resolveCwd(ctx, exec, config, log) {
-  const agent = exec?.agent
-  if (agent !== undefined) {
-    try {
-      const ensured = await ctx.workingDirectory.ensure(agent, exec.signal)
-      return canonicalCwd(ensured) ?? ensured
-    } catch (error) {
-      log.warn(`unica-native: workingDirectory.ensure failed: ${error?.message ?? String(error)}`)
-    }
-    try {
-      const current = ctx.workingDirectory.get(agent.session)
-      if (typeof current === 'string' && current.length > 0) return canonicalCwd(current) ?? current
-    } catch (error) {
-      log.warn(`unica-native: workingDirectory.get failed: ${error?.message ?? String(error)}`)
-    }
+  const { agent, signal } = exec
+  signal?.throwIfAborted()
+  if (agent == null) return config.defaultCwd ?? undefined
+  let unassigned = false
+  const sessionPath = value => typeof value === 'string' && isAbsolute(value) ? canonicalCwd(value) : undefined
+  try {
+    const ensured = await ctx.workingDirectory.ensure(agent, signal)
+    unassigned = ensured == null
+    const path = sessionPath(ensured)
+    if (path) return path
+  } catch (error) {
+    signal?.throwIfAborted()
+    log.warn(`unica-native: workingDirectory.ensure failed: ${error?.message ?? String(error)}`)
   }
-  return config.defaultCwd ?? undefined
+  signal?.throwIfAborted()
+  try {
+    const current = ctx.workingDirectory.get(agent.session)
+    const path = sessionPath(current)
+    if (path) return path
+    if (unassigned && current == null) return config.defaultCwd ?? undefined
+  } catch (error) {
+    throw new Error(`unica-native: cannot determine session working directory: ${error?.message ?? String(error)}`, { cause: error })
+  }
+  throw new Error('unica-native: cannot determine session working directory')
 }
 
 function createToolDefinition({ tool, publicName, ctx, config, pool, log }) {
@@ -74,7 +81,7 @@ function createToolDefinition({ tool, publicName, ctx, config, pool, log }) {
       },
       render: (_args, value) => [{ type: 'text', text: normalizeResult(value).text }],
     },
-    async execute(args, exec) {
+    async execute(args, exec = {}) {
       const cwd = await resolveCwd(ctx, exec, config, log)
       if (cwd === undefined) {
         throw new Error('unica-native: the session has no working directory and defaultCwd is not configured')
@@ -115,7 +122,7 @@ export async function apply(ctx, rawConfig) {
       const publicName = publicToolName(config.serverName, tool.name)
       disposers.push(ctx.tools.register(createToolDefinition({ tool, publicName, ctx, config, pool, log })))
     }
-    log.info(`unica-native: registered ${disposers.length} tools (probe cwd ${config.probeCwd ?? tmpdir()})`)
+    log.info(`unica-native: registered ${disposers.length} tools (probe cwd ${catalogCwd(config)})`)
   }
 
   let tools
